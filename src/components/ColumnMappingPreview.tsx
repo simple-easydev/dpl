@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { CheckCircle, AlertCircle, X, AlertTriangle, Package } from 'lucide-react';
+import { CheckCircle, AlertCircle, AlertTriangle, Package } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from './ui/dialog';
 
 interface ColumnMappingPreviewProps {
   columns: string[];
@@ -102,19 +110,11 @@ export default function ColumnMappingPreview({
 
   if (!columns || columns.length === 0) {
     return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl max-w-2xl w-full p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-              Column Detection Error
-            </h2>
-            <button
-              onClick={onCancel}
-              className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition"
-            >
-              <X className="w-5 h-5 text-gray-500 dark:text-zinc-400" />
-            </button>
-          </div>
+      <Dialog open={true} onOpenChange={(open) => !open && onCancel()}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900 dark:text-white">Column Detection Error</DialogTitle>
+          </DialogHeader>
           <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/30 rounded-lg">
             <div className="flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
@@ -136,37 +136,31 @@ export default function ColumnMappingPreview({
               </div>
             </div>
           </div>
-          <div className="mt-4 flex justify-end">
+          <DialogFooter>
             <button
               onClick={onCancel}
               className="px-4 py-2 bg-gray-200 dark:bg-zinc-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-zinc-600 transition"
             >
               Close
             </button>
-          </div>
-        </div>
-      </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+    <Dialog open={true} onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col p-0">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-white/10">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900 dark:text-white">
               Column Mapping Preview
-            </h2>
-            <p className="text-sm text-gray-600 dark:text-zinc-400 mt-1">
+            </DialogTitle>
+            <DialogDescription className="text-gray-600 dark:text-zinc-400">
               Review and adjust the detected column mappings before importing
-            </p>
-          </div>
-          <button
-            onClick={onCancel}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition"
-          >
-            <X className="w-5 h-5 text-gray-500 dark:text-zinc-400" />
-          </button>
+            </DialogDescription>
+          </DialogHeader>
         </div>
 
         <div className="px-6 py-4 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-500/30">
@@ -431,7 +425,7 @@ export default function ColumnMappingPreview({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

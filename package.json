@@ -13,7 +13,10 @@
     "fix-db-config": "node scripts/validate-db-config.cjs fix"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
     "@supabase/supabase-js": "^2.57.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "d3-geo": "^3.1.1",
     "date-fns": "^4.1.0",
     "jspdf": "^3.0.3",
@@ -29,6 +32,7 @@
     "react-simple-maps": "^3.0.0",
     "recharts": "^3.2.1",
     "resend": "^6.1.2",
+    "tailwind-merge": "^3.4.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
