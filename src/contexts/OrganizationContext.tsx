@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 
@@ -30,6 +30,8 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [isViewingAllBrands, setIsViewingAllBrands] = useState(false);
   const [retryScheduled, setRetryScheduled] = useState(false);
+  const hasLoadedRef = useRef(false);
+  const previousUserIdRef = useRef<string | null>(null);
 
   const fetchOrganizations = async () => {
     if (!user) {
@@ -232,12 +234,22 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (user) {
-      fetchOrganizations();
+      // Only fetch if user changed or first load
+      if (user.id !== previousUserIdRef.current || !hasLoadedRef.current) {
+        console.log('[OrganizationContext] User changed or first load, fetching organizations');
+        previousUserIdRef.current = user.id;
+        hasLoadedRef.current = true;
+        fetchOrganizations();
+      } else {
+        console.log('[OrganizationContext] Same user, skipping redundant fetch');
+      }
     } else {
       setOrganizations([]);
       setCurrentOrganization(null);
       localStorage.removeItem('currentOrganizationId');
       setLoading(false);
+      hasLoadedRef.current = false;
+      previousUserIdRef.current = null;
     }
   }, [user]);
 

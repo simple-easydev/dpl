@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
@@ -21,6 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const previousUserIdRef = useRef<string | null>(null);
 
   const checkPlatformAdmin = async (userId: string) => {
     try {
@@ -70,7 +71,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log('AUTH STATE CHANGE: Current URL:', window.location.href);
       console.log('AUTH STATE CHANGE: URL hash:', window.location.hash);
 
+      // Skip redundant updates for same user (prevents re-loading on tab switch)
+      const newUserId = session?.user?.id ?? null;
+      if (newUserId === previousUserIdRef.current && event !== 'SIGNED_OUT' && event !== 'SIGNED_IN') {
+        console.log('AUTH STATE CHANGE: Same user, skipping redundant update');
+        return;
+      }
+
       (async () => {
+        previousUserIdRef.current = newUserId;
         setSession(session);
         setUser(session?.user ?? null);
         if (session?.user) {
