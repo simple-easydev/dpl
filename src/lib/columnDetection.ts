@@ -1,0 +1,854 @@
+import { supabase } from './supabase';
+import { getOrganizationOpenAI } from './openai';
+
+export interface ColumnMapping {
+  date?: string;
+  month?: string;
+  year?: string;
+  revenue?: string;
+  amount?: string;
+  account?: string;
+  customer?: string;
+  product?: string;
+  sku?: string;
+  quantity?: string;
+  order_id?: string;
+  category?: string;
+  region?: string;
+  distributor?: string;
+  representative?: string;
+  date_of_sale?: string;
+  brand?: string;
+}
+
+export interface DetectionResult {
+  mapping: ColumnMapping;
+  confidence: number;
+  method: 'openai' | 'synonym' | 'pattern' | 'learned' | 'hybrid';
+  details: {
+    [key: string]: {
+      column: string;
+      confidence: number;
+      source: string;
+    };
+  };
+}
+
+interface FieldSynonym {
+  field_type: string;
+  synonym: string;
+  confidence_weight: number;
+}
+
+interface LearnedMapping {
+  final_mapping: ColumnMapping;
+  confidence_score: number;
+  detection_method: string;
+}
+
+export async function detectColumnMappingEnhanced(
+  sampleRows: any[],
+  organizationId: string,
+  distributorId?: string,
+  filename?: string,
+  aiTrainingConfig?: { field_mappings?: Record<string, any>; parsing_instructions?: string; orientation?: string }
+): Promise<DetectionResult> {
+  if (sampleRows.length === 0) {
+    return {
+      mapping: {},
+      confidence: 0,
+      method: 'pattern',
+      details: {},
+    };
+  }
+
+  const columns = Object.keys(sampleRows[0]);
+  console.log('🔍 Detecting columns:', columns);
+
+  const synonyms = await loadSynonyms(organizationId);
+  const learnedMappings = await loadLearnedMappings(organizationId, distributorId, filename);
+
+  let bestResult: DetectionResult = {
+    mapping: {},
+    confidence: 0,
+    method: 'pattern',
+    details: {},
+  };
+
+  let aiResult: DetectionResult | null = null;
+  let learnedResult: DetectionResult | null = null;
+  let synonymResult: DetectionResult | null = null;
+  let patternResult: DetectionResult | null = null;
+  let aiTrainingResult: DetectionResult | null = null;
+
+  if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
+    console.log('🎓 Found AI training field mappings, attempting direct mapping...');
+    try {
+      aiTrainingResult = sanitizeDetectionResult(detectWithAITrainingMappings(columns, sampleRows, aiTrainingConfig.field_mappings));
+      if (aiTrainingResult.confidence > bestResult.confidence) {
+        bestResult = aiTrainingResult;
+        console.log('✅ AI training mapping applied with confidence:', aiTrainingResult.confidence);
+      }
+    } catch (error) {
+      console.warn('⚠️ AI training mapping failed:', error);
+    }
+  }
+
+  if (learnedMappings.length > 0) {
+    console.log('📚 Found learned mappings, attempting to apply...');
+    try {
+      learnedResult = sanitizeDetectionResult(applyLearnedMapping(columns, learnedMappings));
+      if (learnedResult.confidence > bestResult.confidence) {
+        bestResult = learnedResult;
+        console.log('✅ Learned mapping applied with confidence:', learnedResult.confidence);
+      }
+    } catch (error) {
+      console.warn('⚠️ Learned mapping failed:', error);
+    }
+  }
+
+  const aiClient = await getOrganizationOpenAI(organizationId);
+  if (aiClient) {
+    console.log('🤖 Attempting OpenAI detection...');
+    if (aiTrainingConfig?.parsing_instructions) {
+      console.log('📖 Using AI training instructions from configuration');
+    }
+    try {
+      aiResult = sanitizeDetectionResult(await detectWithOpenAI(aiClient, sampleRows, synonyms, aiTrainingConfig));
+      if (aiResult.confidence > bestResult.confidence) {
+        bestResult = aiResult;
+        console.log('✅ OpenAI detection succeeded with confidence:', aiResult.confidence);
+      }
+    } catch (error) {
+      console.warn('⚠️ OpenAI detection failed:', error);
+    }
+  }
+
+  console.log('🔤 Attempting synonym-based detection...');
+  try {
+    synonymResult = sanitizeDetectionResult(detectWithSynonyms(columns, sampleRows, synonyms));
+    if (synonymResult.confidence > bestResult.confidence) {
+      bestResult = synonymResult;
+      console.log('✅ Synonym detection succeeded with confidence:', synonymResult.confidence);
+    }
+  } catch (error) {
+    console.warn('⚠️ Synonym detection failed:', error);
+  }
+
+  console.log('📊 Attempting pattern-based detection...');
+  try {
+    patternResult = sanitizeDetectionResult(detectWithPatterns(columns, sampleRows));
+    if (patternResult.confidence > bestResult.confidence) {
+      bestResult = patternResult;
+      console.log('✅ Pattern detection succeeded with confidence:', patternResult.confidence);
+    }
+  } catch (error) {
+    console.warn('⚠️ Pattern detection failed:', error);
+  }
+
+  try {
+    const validResults = [aiTrainingResult, aiResult, learnedResult, synonymResult, patternResult].filter(r => r !== null) as DetectionResult[];
+    if (validResults.length > 0) {
+      const hybridResult = combineResults(validResults);
+      if (hybridResult.confidence > bestResult.confidence) {
+        bestResult = hybridResult;
+        console.log('✅ Hybrid approach improved confidence to:', hybridResult.confidence);
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Hybrid combination failed, using best individual result:', error);
+  }
+
+  bestResult = sanitizeDetectionResult(bestResult);
+
+  console.log('🎯 Final mapping:', bestResult.mapping);
+  console.log('📈 Final confidence:', bestResult.confidence);
+  console.log('🔧 Detection method:', bestResult.method);
+
+  return bestResult;
+}
+
+async function loadSynonyms(organizationId: string): Promise<FieldSynonym[]> {
+  const { data: globalSynonyms } = await supabase
+    .from('field_synonyms')
+    .select('field_type, synonym, confidence_weight')
+    .is('organization_id', null)
+    .eq('is_active', true);
+
+  const { data: orgSynonyms } = await supabase
+    .from('field_synonyms')
+    .select('field_type, synonym, confidence_weight')
+    .eq('organization_id', organizationId)
+    .eq('is_active', true);
+
+  return [...(globalSynonyms || []), ...(orgSynonyms || [])];
+}
+
+async function loadLearnedMappings(
+  organizationId: string,
+  distributorId?: string,
+  filename?: string
+): Promise<LearnedMapping[]> {
+  let query = supabase
+    .from('column_mapping_history')
+    .select('final_mapping, confidence_score, detection_method')
+    .eq('organization_id', organizationId)
+    .gte('confidence_score', 0.7)
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  if (distributorId) {
+    query = query.eq('distributor_id', distributorId);
+  }
+
+  const { data } = await query;
+  return data || [];
+}
+
+function applyLearnedMapping(
+  columns: string[],
+  learnedMappings: LearnedMapping[]
+): DetectionResult {
+  const columnSet = new Set(columns.map(c => c.toLowerCase().trim()));
+
+  for (const learned of learnedMappings) {
+    const learnedColumns = Object.values(learned.final_mapping)
+      .filter(Boolean)
+      .map((c: any) => c.toLowerCase().trim());
+
+    const matchCount = learnedColumns.filter(c => columnSet.has(c)).length;
+    const matchRatio = learnedColumns.length > 0 ? matchCount / learnedColumns.length : 0;
+
+    if (matchRatio >= 0.7) {
+      const details: any = {};
+      Object.entries(learned.final_mapping).forEach(([field, column]) => {
+        if (column && columnSet.has(column.toLowerCase().trim())) {
+          details[field] = {
+            column,
+            confidence: learned.confidence_score,
+            source: 'learned',
+          };
+        }
+      });
+
+      return {
+        mapping: learned.final_mapping,
+        confidence: matchRatio * learned.confidence_score,
+        method: 'learned',
+        details,
+      };
+    }
+  }
+
+  return { mapping: {}, confidence: 0, method: 'learned', details: {} };
+}
+
+function detectWithAITrainingMappings(
+  columns: string[],
+  sampleRows: any[],
+  fieldMappings: Record<string, any>
+): DetectionResult {
+  const mapping: any = {};
+  const details: any = {};
+  let totalConfidence = 0;
+  let mappedFields = 0;
+
+  const normalizedColumns = columns.map(col => ({
+    original: col,
+    normalized: col.toLowerCase().trim()
+  }));
+
+  for (const [targetField, possibleColumns] of Object.entries(fieldMappings)) {
+    if (!possibleColumns || (Array.isArray(possibleColumns) && possibleColumns.length === 0)) {
+      continue;
+    }
+
+    const columnsList = Array.isArray(possibleColumns) ? possibleColumns : [possibleColumns];
+
+    for (const possibleCol of columnsList) {
+      if (!possibleCol) continue;
+
+      const normalizedPossible = String(possibleCol).toLowerCase().trim();
+
+      const matchedColumn = normalizedColumns.find(col =>
+        col.normalized === normalizedPossible
+      );
+
+      if (matchedColumn) {
+        const mappingKey = getFieldKey(targetField) || targetField;
+
+        if (!mapping[mappingKey]) {
+          mapping[mappingKey] = matchedColumn.original;
+          details[mappingKey] = {
+            column: matchedColumn.original,
+            confidence: 0.95,
+            source: 'ai_training_config',
+          };
+          totalConfidence += 0.95;
+          mappedFields++;
+          console.log(`✓ Mapped ${matchedColumn.original} → ${mappingKey} (AI training)`);
+        }
+        break;
+      }
+    }
+  }
+
+  const overallConfidence = mappedFields > 0 ? totalConfidence / mappedFields : 0;
+
+  console.log(`🎓 AI Training Mapping: ${mappedFields} fields mapped with ${(overallConfidence * 100).toFixed(0)}% confidence`);
+
+  return {
+    mapping,
+    confidence: overallConfidence,
+    method: 'ai_training',
+    details,
+  };
+}
+
+async function detectWithOpenAI(
+  aiClient: any,
+  sampleRows: any[],
+  synonyms: FieldSynonym[],
+  aiTrainingConfig?: { field_mappings?: Record<string, any>; parsing_instructions?: string; orientation?: string }
+): Promise<DetectionResult> {
+  const columns = Object.keys(sampleRows[0] || {});
+  const sampleData = sampleRows.slice(0, 5);
+
+  const synonymsByField = synonyms.reduce((acc, s) => {
+    if (!acc[s.field_type]) acc[s.field_type] = [];
+    acc[s.field_type].push(s.synonym);
+    return acc;
+  }, {} as Record<string, string[]>);
+
+  const synonymExamples = Object.entries(synonymsByField)
+    .map(([field, syns]) => `  ${field}: ${syns.slice(0, 10).join(', ')}`)
+    .join('\n');
+
+  let prompt = `You are an expert at analyzing sales data files and identifying column mappings.
+
+Available columns in this file:
+${columns.join(', ')}
+
+Sample data (first 5 rows):
+${JSON.stringify(sampleData, null, 2)}
+
+Common synonyms for each field type:
+${synonymExamples}
+
+IMPORTANT: For depletion reports, only "account" and "product" are REQUIRED fields.
+"date" and "revenue" are OPTIONAL - many depletion reports only track product movement (quantity) without financial data.
+
+Your task: Identify which columns correspond to each field type. Consider:
+1. Exact matches with synonyms (e.g., "Cases" = quantity, "Units" = quantity)
+2. Partial matches (e.g., "Total Amount" contains "amount")
+3. The actual data values in the sample rows
+4. Context clues from other columns
+5. If date or revenue columns are not clearly present, it's acceptable to leave them null`;
+
+  if (aiTrainingConfig?.parsing_instructions) {
+    prompt += `\n\nIMPORTANT - DISTRIBUTOR-SPECIFIC AI TRAINING INSTRUCTIONS:
+${aiTrainingConfig.parsing_instructions}
+
+Please apply these instructions when mapping columns. These instructions describe the specific format and conventions used by this distributor.`;
+  }
+
+  if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
+    prompt += `\n\nFIELD MAPPING HINTS FROM AI TRAINING:
+${JSON.stringify(aiTrainingConfig.field_mappings, null, 2)}
+
+Use these learned patterns to help identify column mappings.`;
+  }
+
+  prompt += `
+
+Return a JSON object with this structure:
+{
+  "mapping": {
+    "date": "column_name_or_null",
+    "revenue": "column_name_or_null",
+    "account": "column_name_or_null",
+    "product": "column_name_or_null",
+    "quantity": "column_name_or_null",
+    "order_id": "column_name_or_null",
+    "category": "column_name_or_null",
+    "region": "column_name_or_null",
+    "representative": "column_name_or_null"
+  },
+  "confidence": 0.95
+}
+
+Rules:
+- Only include fields you can confidently identify
+- Set confidence between 0.0 and 1.0 based on how certain you are
+- For quantity: "Cases", "Units", "Qty", "Boxes", "·" (bullet) all mean quantity
+- For revenue: "Amount", "Total", "Sales", "Extended Price" all mean revenue
+- Return ONLY the JSON object, no explanation`;
+
+  const response = await aiClient.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      {
+        role: 'system',
+        content: 'You are a precise data mapping assistant. Return only valid JSON with no additional text.',
+      },
+      { role: 'user', content: prompt },
+    ],
+    temperature: 0.1,
+    response_format: { type: 'json_object' },
+  });
+
+  const content = response.choices[0]?.message?.content || '{"mapping": {}, "confidence": 0}';
+  const parsed = JSON.parse(content.replace(/```json\n?|\n?```/g, ''));
+
+  const details: any = {};
+  Object.entries(parsed.mapping || {}).forEach(([field, column]) => {
+    if (column) {
+      details[field] = {
+        column,
+        confidence: parsed.confidence || 0.8,
+        source: 'openai',
+      };
+    }
+  });
+
+  return {
+    mapping: parsed.mapping || {},
+    confidence: parsed.confidence || 0.8,
+    method: 'openai',
+    details,
+  };
+}
+
+function detectWithSynonyms(
+  columns: string[],
+  sampleRows: any[],
+  synonyms: FieldSynonym[]
+): DetectionResult {
+  const mapping: any = {};
+  const details: any = {};
+  let totalConfidence = 0;
+  let mappedFields = 0;
+
+  const synonymMap = new Map<string, { field: string; weight: number }[]>();
+
+  synonyms.forEach(s => {
+    const normalizedSynonym = s.synonym.toLowerCase().trim();
+    if (!synonymMap.has(normalizedSynonym)) {
+      synonymMap.set(normalizedSynonym, []);
+    }
+    synonymMap.get(normalizedSynonym)!.push({
+      field: s.field_type,
+      weight: s.confidence_weight,
+    });
+  });
+
+  for (const col of columns) {
+    const normalizedCol = col.toLowerCase().trim();
+
+    if (synonymMap.has(normalizedCol)) {
+      const matches = synonymMap.get(normalizedCol)!;
+      const bestMatch = matches.reduce((best, curr) =>
+        curr.weight > best.weight ? curr : best
+      );
+
+      const fieldKey = getFieldKey(bestMatch.field);
+      if (fieldKey && !mapping[fieldKey]) {
+        mapping[fieldKey] = col;
+        details[fieldKey] = {
+          column: col,
+          confidence: bestMatch.weight,
+          source: 'synonym-exact',
+        };
+        totalConfidence += bestMatch.weight;
+        mappedFields++;
+      }
+    } else {
+      for (const [synonym, matches] of synonymMap.entries()) {
+        if (normalizedCol.includes(synonym) || synonym.includes(normalizedCol)) {
+          const bestMatch = matches.reduce((best, curr) =>
+            curr.weight > best.weight ? curr : best
+          );
+
+          const fieldKey = getFieldKey(bestMatch.field);
+          if (fieldKey && !mapping[fieldKey]) {
+            mapping[fieldKey] = col;
+            details[fieldKey] = {
+              column: col,
+              confidence: bestMatch.weight * 0.8,
+              source: 'synonym-partial',
+            };
+            totalConfidence += bestMatch.weight * 0.8;
+            mappedFields++;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  const overallConfidence = mappedFields > 0 ? totalConfidence / mappedFields : 0;
+
+  return {
+    mapping,
+    confidence: overallConfidence,
+    method: 'synonym',
+    details,
+  };
+}
+
+function detectWithPatterns(columns: string[], sampleRows: any[]): DetectionResult {
+  const mapping: any = {};
+  const details: any = {};
+
+  const patterns = {
+    date: [
+      { regex: /^(order[_ ]?date|invoice[_ ]?date|sale[_ ]?date|ship[_ ]?date|transaction[_ ]?date)$/i, weight: 1.0 },
+      { regex: /^(period|month[_ ]?year|sales[_ ]?period|reporting[_ ]?period)$/i, weight: 0.95 },
+      { regex: /date/i, weight: 0.7 },
+    ],
+    month: [
+      { regex: /^(month|sales[_ ]?month|period[_ ]?month|month[_ ]?name|month[_ ]?number|mnth)$/i, weight: 1.0 },
+      { regex: /month/i, weight: 0.8 },
+    ],
+    year: [
+      { regex: /^(year|sales[_ ]?year|period[_ ]?year|yr)$/i, weight: 1.0 },
+      { regex: /year/i, weight: 0.8 },
+    ],
+    revenue: [
+      { regex: /^(revenue|amount|total|extended[_ ]?price|sale[_ ]?amount|net[_ ]?amount|line[_ ]?total|ext[_ ]?price)$/i, weight: 1.0 },
+      { regex: /(revenue|amount|price|sales|total|ext[_ ]?price|line[_ ]?amt)/i, weight: 0.7 },
+      { regex: /(amt|value|cost)/i, weight: 0.5 },
+    ],
+    account: [
+      { regex: /^(account|customer|client|ship[_ ]?to|sold[_ ]?to|acct[_ ]?name|cust[_ ]?name|customer[_ ]?name)$/i, weight: 1.0 },
+      { regex: /(account|customer|client|acct|cust|buyer|purchaser)/i, weight: 0.7 },
+    ],
+    product: [
+      { regex: /^(product|item|sku|part[_ ]?number|item[_ ]?number|prod[_ ]?name|item[_ ]?desc|description)$/i, weight: 1.0 },
+      { regex: /(product|item|sku|material|part|prod|desc)/i, weight: 0.7 },
+    ],
+    quantity: [
+      { regex: /^(quantity|qty|units|cases|boxes|count|volume|pieces|qnty|pcs|cs)$/i, weight: 1.0 },
+      { regex: /(quantity|qty|units|cases|boxes|count|pcs|qnty|cs|vol)/i, weight: 0.8 },
+    ],
+    order_id: [
+      { regex: /^(order[_ ]?id|order[_ ]?number|invoice[_ ]?number|transaction[_ ]?id)$/i, weight: 1.0 },
+      { regex: /(order|invoice|transaction).*(id|number|no)/i, weight: 0.8 },
+    ],
+    representative: [
+      { regex: /^(rep|representative|sales[_ ]?rep|salesperson|account[_ ]?manager|sold[_ ]?by|sales[_ ]?person|sales[_ ]?agent)$/i, weight: 1.0 },
+      { regex: /(rep|sales[_ ]?rep|salesperson|agent|manager|sold[_ ]?by)/i, weight: 0.7 },
+      { regex: /(sales|agent)/i, weight: 0.5 },
+    ],
+    brand: [
+      { regex: /^(brand|brand[_ ]?name|manufacturer|producer|supplier|vendor[_ ]?name|company[_ ]?name)$/i, weight: 1.0 },
+      { regex: /(brand|manufacturer|producer|supplier|vendor|company|mfg)/i, weight: 0.7 },
+    ],
+  };
+
+  for (const col of columns) {
+    for (const [field, patternList] of Object.entries(patterns)) {
+      if (!mapping[field]) {
+        for (const { regex, weight } of patternList) {
+          if (regex.test(col)) {
+            mapping[field] = col;
+            details[field] = {
+              column: col,
+              confidence: weight,
+              source: 'pattern',
+            };
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  const analyzedMapping = analyzeDataValues(sampleRows, columns, mapping);
+  Object.assign(mapping, analyzedMapping.mapping);
+  Object.assign(details, analyzedMapping.details);
+
+  const mappedCount = Object.keys(mapping).length;
+  const avgConfidence = Object.values(details).reduce((sum: number, d: any) => sum + d.confidence, 0) / Math.max(mappedCount, 1);
+
+  return {
+    mapping,
+    confidence: avgConfidence,
+    method: 'pattern',
+    details,
+  };
+}
+
+function analyzeDataValues(sampleRows: any[], columns: string[], existingMapping: any): { mapping: any; details: any } {
+  const mapping: any = {};
+  const details: any = {};
+
+  for (const col of columns) {
+    if (Object.values(existingMapping).includes(col)) continue;
+
+    const values = sampleRows.map(row => row[col]).filter(v => v != null && v !== '');
+    if (values.length === 0) continue;
+
+    if (!existingMapping.date && isLikelyDate(values)) {
+      mapping.date = col;
+      details.date = { column: col, confidence: 0.85, source: 'value-analysis' };
+    } else if (!existingMapping.month && isLikelyMonth(values)) {
+      mapping.month = col;
+      details.month = { column: col, confidence: 0.85, source: 'value-analysis' };
+    } else if (!existingMapping.year && isLikelyYear(values)) {
+      mapping.year = col;
+      details.year = { column: col, confidence: 0.85, source: 'value-analysis' };
+    } else if (!existingMapping.revenue && isLikelyRevenue(values)) {
+      mapping.revenue = col;
+      details.revenue = { column: col, confidence: 0.8, source: 'value-analysis' };
+    } else if (!existingMapping.quantity && isLikelyQuantity(values)) {
+      mapping.quantity = col;
+      details.quantity = { column: col, confidence: 0.75, source: 'value-analysis' };
+    }
+  }
+
+  return { mapping, details };
+}
+
+function isLikelyDate(values: any[]): boolean {
+  let dateCount = 0;
+  for (const val of values.slice(0, 10)) {
+    const str = String(val);
+    if (/\d{1,4}[-\/]\d{1,2}[-\/]\d{1,4}/.test(str) || !isNaN(Date.parse(str))) {
+      dateCount++;
+    }
+  }
+  return dateCount / Math.min(values.length, 10) > 0.7;
+}
+
+function isLikelyMonth(values: any[]): boolean {
+  let monthCount = 0;
+  const monthNames = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|may|june|july|august|september|october|november|december)$/i;
+
+  for (const val of values.slice(0, 10)) {
+    const str = String(val).trim().toLowerCase();
+    const num = Number(str);
+
+    if (monthNames.test(str)) {
+      monthCount++;
+    } else if (Number.isInteger(num) && num >= 1 && num <= 12) {
+      monthCount++;
+    }
+  }
+  return monthCount / Math.min(values.length, 10) > 0.7;
+}
+
+function isLikelyYear(values: any[]): boolean {
+  let yearCount = 0;
+  for (const val of values.slice(0, 10)) {
+    const num = Number(val);
+    if (Number.isInteger(num) && num >= 2000 && num <= 2100) {
+      yearCount++;
+    }
+  }
+  return yearCount / Math.min(values.length, 10) > 0.7;
+}
+
+function isLikelyRevenue(values: any[]): boolean {
+  let numericCount = 0;
+  let hasDecimal = false;
+
+  for (const val of values.slice(0, 10)) {
+    const str = String(val).replace(/[$,\s]/g, '');
+    const num = parseFloat(str);
+    if (!isNaN(num) && num > 0) {
+      numericCount++;
+      if (str.includes('.') && num > 10) hasDecimal = true;
+    }
+  }
+
+  return numericCount / Math.min(values.length, 10) > 0.8 && hasDecimal;
+}
+
+function isLikelyQuantity(values: any[]): boolean {
+  let integerCount = 0;
+
+  for (const val of values.slice(0, 10)) {
+    const num = Number(val);
+    if (Number.isInteger(num) && num > 0 && num < 10000) {
+      integerCount++;
+    }
+  }
+
+  return integerCount / Math.min(values.length, 10) > 0.7;
+}
+
+function sanitizeDetectionResult(result: DetectionResult): DetectionResult {
+  if (!result.details || typeof result.details !== 'object') {
+    result.details = {};
+  }
+  if (!result.mapping || typeof result.mapping !== 'object') {
+    result.mapping = {};
+  }
+  if (typeof result.confidence !== 'number') {
+    result.confidence = 0;
+  }
+  return result;
+}
+
+function combineResults(results: DetectionResult[]): DetectionResult {
+  const combinedMapping: any = {};
+  const combinedDetails: any = {};
+
+  if (!results || results.length === 0) {
+    return {
+      mapping: {},
+      confidence: 0,
+      method: 'hybrid',
+      details: {},
+    };
+  }
+
+  const validResults = results.filter(r => r && r.mapping && r.details);
+  if (validResults.length === 0) {
+    console.warn('⚠️ No valid results to combine');
+    return {
+      mapping: {},
+      confidence: 0,
+      method: 'hybrid',
+      details: {},
+    };
+  }
+
+  const fieldScores: Record<string, { column: string; score: number; sources: string[] }> = {};
+
+  for (const result of validResults) {
+    if (!result.details) {
+      console.warn('⚠️ Result missing details, skipping:', result.method);
+      continue;
+    }
+
+    Object.entries(result.mapping).forEach(([field, column]) => {
+      if (!column) return;
+
+      const key = `${field}:${column}`;
+      if (!fieldScores[key]) {
+        fieldScores[key] = { column: column as string, score: 0, sources: [] };
+      }
+
+      const detailConf = (result.details && result.details[field]?.confidence) || result.confidence || 0;
+      fieldScores[key].score += detailConf * 0.5;
+      fieldScores[key].sources.push(result.method);
+    });
+  }
+
+  const fieldBest: Record<string, { column: string; score: number; sources: string[] }> = {};
+  Object.entries(fieldScores).forEach(([key, data]) => {
+    const field = key.split(':')[0];
+    if (!fieldBest[field] || data.score > fieldBest[field].score) {
+      fieldBest[field] = data;
+    }
+  });
+
+  Object.entries(fieldBest).forEach(([field, data]) => {
+    combinedMapping[field] = data.column;
+    combinedDetails[field] = {
+      column: data.column,
+      confidence: Math.min(data.score, 1.0),
+      source: data.sources.join('+'),
+    };
+  });
+
+  const avgConfidence = Object.values(combinedDetails).reduce((sum: number, d: any) => sum + d.confidence, 0) / Math.max(Object.keys(combinedDetails).length, 1);
+
+  return {
+    mapping: combinedMapping,
+    confidence: avgConfidence,
+    method: 'hybrid',
+    details: combinedDetails,
+  };
+}
+
+function getFieldKey(fieldType: string): string | null {
+  const mapping: Record<string, string> = {
+    'date': 'date',
+    'revenue': 'revenue',
+    'amount': 'revenue',
+    'account': 'account',
+    'customer': 'account',
+    'account_name': 'account',
+    'product': 'product',
+    'product_name': 'product',
+    'sku': 'product',
+    'quantity': 'quantity',
+    'order_id': 'order_id',
+    'category': 'category',
+    'region': 'region',
+    'distributor': 'distributor',
+    'representative': 'representative',
+    'date_of_sale': 'date_of_sale',
+    'brand': 'brand',
+    'address': 'address',
+    'city': 'city',
+    'state': 'state',
+    'zip': 'zip',
+    'phone': 'phone',
+    'vintage': 'vintage',
+    'premise_type': 'premise_type',
+    'sale_type': 'sale_type',
+    'bottles_count': 'bottles_count',
+    'bottles_per_case': 'bottles_per_case',
+  };
+  return mapping[fieldType] || null;
+}
+
+export async function saveColumnMappingHistory(
+  organizationId: string,
+  uploadId: string | null,
+  distributorId: string | null,
+  filename: string,
+  detectedColumns: string[],
+  finalMapping: ColumnMapping,
+  confidenceScore: number,
+  detectionMethod: string,
+  rowsProcessed: number,
+  successRate: number
+): Promise<void> {
+  const filenamePattern = generateFilenamePattern(filename);
+
+  await supabase.from('column_mapping_history').insert({
+    organization_id: organizationId,
+    upload_id: uploadId,
+    distributor_id: distributorId,
+    filename_pattern: filenamePattern,
+    detected_columns: detectedColumns,
+    final_mapping: finalMapping as any,
+    confidence_score: confidenceScore,
+    detection_method: detectionMethod,
+    rows_processed: rowsProcessed,
+    success_rate: successRate,
+  });
+
+  await updateSynonymUsage(organizationId, finalMapping);
+}
+
+function generateFilenamePattern(filename: string): string {
+  return filename
+    .toLowerCase()
+    .replace(/\d{4}-\d{2}-\d{2}/g, '%')
+    .replace(/\d{4}_\d{2}_\d{2}/g, '%')
+    .replace(/\d{2}-\d{2}-\d{4}/g, '%')
+    .replace(/\d+/g, '%')
+    .replace(/[_\-\s]+/g, '%');
+}
+
+async function updateSynonymUsage(organizationId: string, mapping: ColumnMapping): Promise<void> {
+  for (const column of Object.values(mapping)) {
+    if (!column) continue;
+
+    const { error } = await supabase
+      .from('field_synonyms')
+      .update({ usage_count: supabase.rpc('increment', { x: 1 }) as any })
+      .eq('synonym', column)
+      .eq('organization_id', organizationId);
+
+    if (error) {
+      console.warn('Failed to update synonym usage:', error);
+    }
+  }
+}

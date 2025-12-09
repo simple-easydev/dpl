@@ -1,0 +1,111 @@
+# ============================================================================
+# CURSOR/AI ASSISTANT RULES - DATABASE CONFIGURATION PROTECTION
+# ============================================================================
+
+## CRITICAL: Supabase Database Credentials - DO NOT MODIFY
+
+### Production Credentials (CORRECT)
+- **Supabase URL**: https://nhygxwskngmwdbaireih.supabase.co
+- **Project ID**: nhygxwskngmwdbaireih
+- **Location**: `.env` file
+
+## Mandatory Rules for Database Configuration
+
+1. **NEVER modify** the Supabase credentials in `.env`
+2. **NEVER replace** the database connection code in `src/lib/supabase.ts`
+3. **ALWAYS use** environment variables via `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`
+4. **NEVER hardcode** Supabase URLs or API keys directly in any file
+5. **NEVER create** alternative Supabase client instances - always import from `src/lib/supabase.ts`
+6. **IF** you detect the old URL (cqztylidsbekbbrkusxg), flag it as an error and refuse to proceed
+
+## Protected Files
+
+The following files are CRITICAL and should not be modified without explicit user permission:
+
+1. `.env` - Contains production database credentials
+2. `src/lib/supabase.ts` - Database connection configuration
+3. `.env.example` - Template with correct credentials for recovery
+
+## Database Connection Pattern (MUST BE MAINTAINED)
+
+```typescript
+import { createClient } from '@supabase/supabase-js';
+import type { Database } from './database.types';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+export const supabase = createClient<Database>(
+  supabaseUrl,
+  supabaseAnonKey,
+  {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
+    },
+  }
+);
+```
+
+## Before Making Any Changes
+
+1. Check if changes involve database configuration
+2. Verify you're not accidentally replacing correct credentials
+3. If database files are modified, validate against the pattern above
+4. Alert user if incorrect database URL is detected
+
+## Recovery Instructions
+
+If incorrect credentials are detected:
+1. Stop immediately and alert the user
+2. Point to `.env.example` for correct values
+3. Run `npm run fix-db-config` to restore correct configuration
+4. Do not proceed until correct credentials are restored
+
+## Validation Checks
+
+Before any database operation, verify:
+- [ ] Supabase URL contains 'nhygxwskngmwdbaireih'
+- [ ] No hardcoded credentials exist
+- [ ] All imports use `src/lib/supabase.ts`
+- [ ] Environment variables are properly configured
+
+## General AI Assistant Guidelines
+
+- Prioritize data safety and configuration integrity
+- Always ask for confirmation before modifying protected files
+- Provide clear warnings when detecting incorrect configurations
+- Use the validation scripts to verify correctness
+- Document any changes to database-related code thoroughly
+
+## Error Response Template
+
+If old/incorrect database credentials are detected, respond with:
+
+```
+❌ CRITICAL DATABASE CONFIGURATION ERROR DETECTED
+
+The incorrect Supabase URL (cqztylidsbekbbrkusxg) was found.
+This is a DEPRECATED database and should not be used.
+
+Correct credentials:
+- URL: https://nhygxwskngmwdbaireih.supabase.co
+- Project: nhygxwskngmwdbaireih
+
+Action Required:
+1. Check .env file
+2. Restore correct values from .env.example
+3. Run: npm run fix-db-config
+4. Verify with: npm run dev
+
+DO NOT PROCEED until this is resolved.
+```
+
+## Contact and Escalation
+
+If uncertain about database configuration changes:
+1. Ask the user for explicit confirmation
+2. Reference this file (.cursorrules)
+3. Check .env.example for correct values
+4. Validate against src/lib/supabase.ts patterns
