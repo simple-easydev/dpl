@@ -291,6 +291,8 @@ ${documentText}`;
     });
 
     const content = response.choices[0]?.message?.content || '{"data": []}';
+
+    console.log(" content ==>", content)
     let parsed;
 
     try {

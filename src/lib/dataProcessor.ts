@@ -214,7 +214,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
 
       const recordsBeforeFilter = transformedRecords.length;
       salesRecords = transformedRecords.filter(record =>
-        record.account && record.product && record.revenue !== null && record.revenue !== undefined
+        record.account && record.product
       );
       const recordsAfterFilter = salesRecords.length;
       const filteredOutCount = recordsBeforeFilter - recordsAfterFilter;
@@ -233,7 +233,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
           console.warn(`   - ${missingProducts} records missing product names`);
         }
         if (missingRevenue > 0) {
-          console.warn(`   - ${missingRevenue} records missing revenue (treated as samples, not recorded)`);
+          console.log(`   ℹ️ ${missingRevenue} records without revenue (optional for depletion reports)`);
         }
 
         if (recordsAfterFilter === 0 && recordsBeforeFilter > 0) {
@@ -375,7 +375,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
       if (failedRows.length > 0) {
         console.warn(`⚠️ ${failedRows.length} rows filtered out`);
 
-        // Count specific reasons for filtering
+        // Count records without revenue (informational only - not a filter reason)
         const missingRevenueCount = rows.filter((row, idx) => {
           const revenueCol = columnMapping.revenue || columnMapping.amount;
           const revenue = revenueCol ? parseNumber(row[revenueCol]) : null;
@@ -383,7 +383,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
         }).length;
 
         if (missingRevenueCount > 0) {
-          console.warn(`   - ${missingRevenueCount} rows missing revenue (treated as samples, not recorded)`);
+          console.log(`   ℹ️ ${missingRevenueCount} rows without revenue (optional for depletion reports)`);
         }
 
         if (failedRows.length < 10) {
@@ -428,18 +428,19 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
             return itemRevenue === null || itemRevenue === undefined;
           }).length;
 
-          if (missingRevenueCount > 0) {
-            issues.push(`${missingRevenueCount} missing revenue data`);
+          // Revenue is optional - don't include in required field errors
+          if (missingRevenueCount > 0 && missingRevenueCount < transformedCount) {
+            console.log(`   ℹ️ ${missingRevenueCount} records without revenue (optional for depletion reports)`);
           }
 
           errorMessage = aiConfigName
             ? `⚠️ Extracted ${transformedCount} records but all missing required fields: ${issues.join(', ')}.\n\n` +
               `Configuration: "${aiConfigName}"\n\n` +
-              (missingRevenueCount > 0 ? `Note: Records without revenue are treated as samples and automatically excluded.\n\n` : '') +
-              `💡 TO FIX: Test "${aiConfigName}" in AI Training page → Update to specify how to extract accounts, products, and revenue`
+              `Note: For depletion reports, only Account and Product are required. Date and Revenue are optional.\n\n` +
+              `💡 TO FIX: Test "${aiConfigName}" in AI Training page → Update to specify how to extract accounts and products`
             : `⚠️ Extracted ${transformedCount} records but all missing: ${issues.join(', ')}.\n\n` +
-              (missingRevenueCount > 0 ? `Note: Records without revenue are treated as samples and automatically excluded.\n\n` : '') +
-              `💡 TO FIX: Create AI training for "${distributorName}" specifying account/product/revenue extraction`;
+              `Note: For depletion reports, only Account and Product are required. Date and Revenue are optional.\n\n` +
+              `💡 TO FIX: Create AI training for "${distributorName}" specifying account and product extraction`;
         }
       } else {
         const aiConfigName = aiConfigs && aiConfigs.length > 0 ? aiConfigs[0].configuration_name : null;
@@ -593,7 +594,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     const insertedRecords: any[] = [];
 
     for (let i = 0; i < salesRecords.length; i += batchSize) {
-      const batch = salesRecords.slice(i, i + batchSize);
+      const batch = salesRecords.slice(i, i + batchSize).map(({ _original, ...record }) => record);
       const { data: insertedData, error: insertError } = await supabase
         .from('sales_data')
         .insert(batch)
@@ -840,10 +841,6 @@ function transformRow(
   }
   const revenue = revenueCol ? parseNumber(row[revenueCol]) : null;
   const hasRevenueData = revenue !== null && revenue !== undefined;
-
-  if (!hasRevenueData) {
-    return null;
-  }
 
   const orderId = mapping.order_id ? cleanString(row[mapping.order_id]) : null;
   const category = mapping.category ? cleanString(row[mapping.category]) : null;

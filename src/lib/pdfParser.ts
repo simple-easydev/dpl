@@ -13,12 +13,11 @@ export interface PDFExtractionResult {
 
 export async function extractTextFromPDF(file: File): Promise<PDFExtractionResult> {
   try {
-    // Use pdfjs-dist directly instead of pdf-parse for browser compatibility
+    // Use pdfjs-dist directly for browser compatibility
     const pdfjsLib = await import('pdfjs-dist');
     
-    // Set up the worker
-    // pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.min.mjs`;
+    // Set up the worker with correct version
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
     const arrayBuffer = await file.arrayBuffer();
     const typedArray = new Uint8Array(arrayBuffer);
@@ -31,20 +30,34 @@ export async function extractTextFromPDF(file: File): Promise<PDFExtractionResul
     const metadata = await pdf.getMetadata();
     const info = metadata.info || {};
 
-    console.log({ pdf });
+    console.log(`Processing PDF: ${pdf.numPages} pages`);
 
-    // Extract text from all pages
-    let fullText = '';
+    // Process pages in parallel with a concurrency limit
+    const pagePromises = [];
+    const BATCH_SIZE = 5; // Process 5 pages at a time to avoid memory issues
+    
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-      const page = await pdf.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item: any) => item.str)
-        .join(' ');
-      fullText += pageText + '\n';
+      pagePromises.push(
+        (async () => {
+          const page = await pdf.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          return textContent.items
+            .map((item: any) => item.str)
+            .join(' ');
+        })()
+      );
+
+      // Process in batches to avoid memory issues
+      if (pagePromises.length >= BATCH_SIZE || pageNum === pdf.numPages) {
+        await Promise.all(pagePromises.slice(-BATCH_SIZE));
+      }
     }
 
-    console.log({ fullText })
+    // Wait for all pages to complete and join text efficiently
+    const pageTexts = await Promise.all(pagePromises);
+    const fullText = pageTexts.join('\n');
+
+    console.log(`Extracted ${fullText.length} characters from ${pdf.numPages} pages`);
 
     return {
       text: fullText,
