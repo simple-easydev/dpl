@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { getOrganizationOpenAI } from './openai';
+import { openai } from './openai';
 
 export interface ColumnMapping {
   date?: string;
@@ -107,7 +107,8 @@ export async function detectColumnMappingEnhanced(
     }
   }
 
-  const aiClient = await getOrganizationOpenAI(organizationId);
+  // const aiClient = await getOrganizationOpenAI(organizationId);
+  const aiClient = openai;
   if (aiClient) {
     console.log('🤖 Attempting OpenAI detection...');
     if (aiTrainingConfig?.parsing_instructions) {
@@ -374,7 +375,7 @@ Return a JSON object with this structure:
     "region": "column_name_or_null",
     "representative": "column_name_or_null"
   },
-  "confidence": 0.95
+  "confidence": confidence
 }
 
 Rules:

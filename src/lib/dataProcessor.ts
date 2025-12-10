@@ -150,7 +150,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     let aiConfigs: any[] = [];
     let extractionResult: any = null;
     let detectionResult: any = null;
-    let parsingWarnings: any = inputParsingWarnings || null;
+    const parsingWarnings: any = inputParsingWarnings || null;
 
     if (pdfFile) {
       console.log(`📄 Processing PDF file: ${filename}...`);
@@ -491,8 +491,8 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     const unmappedProducts = uniqueProductNames.filter(p => !existingMappings.has(p));
 
     let duplicateAnalysis: any[] = [];
-    let productsNeedingReview: string[] = [];
-    let autoMergedProducts: Map<string, string> = new Map();
+    const productsNeedingReview: string[] = [];
+    const autoMergedProducts: Map<string, string> = new Map();
 
     if (unmappedProducts.length > 0) {
       console.log(`   - Analyzing ${unmappedProducts.length} new products for duplicates...`);

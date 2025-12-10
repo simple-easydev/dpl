@@ -17,7 +17,8 @@ export async function extractTextFromPDF(file: File): Promise<PDFExtractionResul
     const pdfjsLib = await import('pdfjs-dist');
     
     // Set up the worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    // pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.min.mjs`;
 
     const arrayBuffer = await file.arrayBuffer();
     const typedArray = new Uint8Array(arrayBuffer);
@@ -30,6 +31,8 @@ export async function extractTextFromPDF(file: File): Promise<PDFExtractionResul
     const metadata = await pdf.getMetadata();
     const info = metadata.info || {};
 
+    console.log({ pdf });
+
     // Extract text from all pages
     let fullText = '';
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -40,6 +43,8 @@ export async function extractTextFromPDF(file: File): Promise<PDFExtractionResul
         .join(' ');
       fullText += pageText + '\n';
     }
+
+    console.log({ fullText })
 
     return {
       text: fullText,
