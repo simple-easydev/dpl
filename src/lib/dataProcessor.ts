@@ -590,6 +590,56 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
       }
     }
 
+    // Deduplicate records with order_id to prevent unique constraint violations
+    const recordsWithOrderId = salesRecords.filter(r => r.order_id);
+    const recordsWithoutOrderId = salesRecords.filter(r => !r.order_id);
+    
+    const seenOrderIds = new Set<string>();
+    const deduplicatedWithOrderId: any[] = [];
+    let duplicateOrderIdCount = 0;
+
+    for (const record of recordsWithOrderId) {
+      const key = `${record.organization_id}:${record.order_id}`;
+      if (!seenOrderIds.has(key)) {
+        seenOrderIds.add(key);
+        deduplicatedWithOrderId.push(record);
+      } else {
+        duplicateOrderIdCount++;
+      }
+    }
+
+    if (duplicateOrderIdCount > 0) {
+      console.warn(`⚠️ Removed ${duplicateOrderIdCount} duplicate order_id entries from upload`);
+    }
+
+    const deduplicatedRecords = [...deduplicatedWithOrderId, ...recordsWithoutOrderId];
+
+    // Check for existing order_ids in database to prevent conflicts
+    if (deduplicatedWithOrderId.length > 0) {
+      const orderIdsToCheck = deduplicatedWithOrderId.map(r => r.order_id);
+      const { data: existingOrderIds } = await supabase
+        .from('sales_data')
+        .select('order_id')
+        .eq('organization_id', organizationId)
+        .in('order_id', orderIdsToCheck);
+
+      if (existingOrderIds && existingOrderIds.length > 0) {
+        const existingSet = new Set(existingOrderIds.map(r => r.order_id));
+        const finalRecords = deduplicatedRecords.filter(r => !r.order_id || !existingSet.has(r.order_id));
+        const skippedCount = deduplicatedRecords.length - finalRecords.length;
+        
+        if (skippedCount > 0) {
+          console.warn(`⚠️ Skipped ${skippedCount} records with order_ids that already exist in database`);
+        }
+        
+        salesRecords = finalRecords;
+      } else {
+        salesRecords = deduplicatedRecords;
+      }
+    } else {
+      salesRecords = deduplicatedRecords;
+    }
+
     const batchSize = 500;
     const insertedRecords: any[] = [];
 
