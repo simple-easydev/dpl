@@ -71,7 +71,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     .from('distributors')
     .select('name, state')
     .eq('id', distributorId)
-    .single();
+    .single() as any;
 
   if (distributorError || !distributor) {
     throw new Error('Invalid distributor selected');
@@ -86,7 +86,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     .select('state')
     .eq('organization_id', organizationId)
     .eq('distributor_id', distributorId)
-    .maybeSingle();
+    .maybeSingle() as any;
 
   if (orgDistributor?.state) {
     distributorState = orgDistributor.state;
@@ -96,7 +96,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     .from('organizations')
     .select('name')
     .eq('id', organizationId)
-    .single();
+    .single() as any;
 
   if (organizationError || !organization) {
     throw new Error('Invalid organization');
