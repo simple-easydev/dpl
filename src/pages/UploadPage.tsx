@@ -102,9 +102,9 @@ export default function UploadPage() {
       .order('created_at', { ascending: false });
 
     if (!error && data) {
-      setUploads(data);
+      setUploads(data as Upload[]);
 
-      const uniqueDistributorIds = [...new Set(data.map(u => u.distributor_id).filter(Boolean))];
+      const uniqueDistributorIds = [...new Set(data.map(u => u.distributor_id).filter(Boolean))] as string[];
       if (uniqueDistributorIds.length > 0) {
         const { data: distributorData } = await supabase
           .from('distributors')

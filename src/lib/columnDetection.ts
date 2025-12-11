@@ -24,7 +24,7 @@ export interface ColumnMapping {
 export interface DetectionResult {
   mapping: ColumnMapping;
   confidence: number;
-  method: 'openai' | 'synonym' | 'pattern' | 'learned' | 'hybrid';
+  method: 'openai' | 'synonym' | 'pattern' | 'learned' | 'hybrid' | 'ai_training';
   details: {
     [key: string]: {
       column: string;
@@ -37,7 +37,7 @@ export interface DetectionResult {
 interface FieldSynonym {
   field_type: string;
   synonym: string;
-  confidence_weight: number;
+  confidence_weight: number | null;
 }
 
 interface LearnedMapping {
@@ -66,7 +66,7 @@ export async function detectColumnMappingEnhanced(
   console.log('🔍 Detecting columns:', columns);
 
   const synonyms = await loadSynonyms(organizationId);
-  const learnedMappings = await loadLearnedMappings(organizationId, distributorId, filename);
+  const learnedMappings = await loadLearnedMappings(organizationId, distributorId);
 
   let bestResult: DetectionResult = {
     mapping: {},
@@ -187,8 +187,7 @@ async function loadSynonyms(organizationId: string): Promise<FieldSynonym[]> {
 
 async function loadLearnedMappings(
   organizationId: string,
-  distributorId?: string,
-  filename?: string
+  distributorId?: string
 ): Promise<LearnedMapping[]> {
   let query = supabase
     .from('column_mapping_history')
@@ -203,7 +202,11 @@ async function loadLearnedMappings(
   }
 
   const { data } = await query;
-  return data || [];
+  return (data || []).map(item => ({
+    final_mapping: item.final_mapping as ColumnMapping,
+    confidence_score: item.confidence_score || 0,
+    detection_method: item.detection_method || 'unknown'
+  }));
 }
 
 function applyLearnedMapping(
@@ -439,7 +442,7 @@ function detectWithSynonyms(
     }
     synonymMap.get(normalizedSynonym)!.push({
       field: s.field_type,
-      weight: s.confidence_weight,
+      weight: s.confidence_weight || 1.0,
     });
   });
 
@@ -615,7 +618,7 @@ function isLikelyDate(values: any[]): boolean {
   let dateCount = 0;
   for (const val of values.slice(0, 10)) {
     const str = String(val);
-    if (/\d{1,4}[-\/]\d{1,2}[-\/]\d{1,4}/.test(str) || !isNaN(Date.parse(str))) {
+    if (/\d{1,4}[-/]\d{1,2}[-/]\d{1,4}/.test(str) || !isNaN(Date.parse(str))) {
       dateCount++;
     }
   }
@@ -844,7 +847,7 @@ async function updateSynonymUsage(organizationId: string, mapping: ColumnMapping
 
     const { error } = await supabase
       .from('field_synonyms')
-      .update({ usage_count: supabase.rpc('increment', { x: 1 }) as any })
+      .update({ usage_count: 1 } as any)
       .eq('synonym', column)
       .eq('organization_id', organizationId);
 

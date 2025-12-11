@@ -14,7 +14,7 @@ interface Distributor {
   id: string;
   name: string;
   state: string | null;
-  active: boolean;
+  active: boolean | null;
 }
 
 interface FileUploadProps {
@@ -187,8 +187,8 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
 
         const aiTrainingConfig = aiConfig ? {
           field_mappings: aiConfig.field_mappings as Record<string, any>,
-          parsing_instructions: aiConfig.parsing_instructions,
-          orientation: aiConfig.orientation,
+          parsing_instructions: aiConfig.parsing_instructions || undefined,
+          orientation: aiConfig.orientation || undefined,
         } : undefined;
 
         const detectionResult = await detectColumnMappingEnhanced(
