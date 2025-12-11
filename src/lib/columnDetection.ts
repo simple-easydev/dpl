@@ -64,11 +64,12 @@ export async function detectColumnMappingEnhanced(
   }
 
   // Detect the actual header row (handles complex layouts with titles/groupings above headers)
-  const headerDetection = detectHeaderRow(sampleRows);
+  const headerDetection = await detectHeaderRow(sampleRows);
   const headerRowIndex = headerDetection.index;
   const columns = headerDetection.columns;
+  const headerConfidence = headerDetection.confidence;
   
-  console.log(`📋 Detected header row at index ${headerRowIndex}:`, columns);
+  console.log(`📋 Detected header row at index ${headerRowIndex} (confidence: ${headerConfidence}%):`, columns);
   
   // Use rows after the header row for data analysis
   const dataRows = sampleRows.slice(headerRowIndex + 1).filter(row => {
@@ -202,15 +203,39 @@ async function loadSynonyms(organizationId: string): Promise<FieldSynonym[]> {
 }
 
 /**
- * Detects the actual header row in complex spreadsheets
+ * Detects the actual header row in complex spreadsheets using AI
  * Handles cases where first rows contain titles, groupings, or empty cells
  */
-function detectHeaderRow(rows: any[]): { index: number; columns: string[] } {
+async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: string[]; confidence: number }> {
 
   if (rows.length === 0) {
-    return { index: 0, columns: [] };
+    return { index: 0, columns: [], confidence: 0 };
   }
 
+  // Use AI to detect header row
+  try {
+    console.log('🤖 Using AI to detect header row...');
+    
+    const aiResult = await detectHeaderRowWithAI(rows);
+    
+    if (aiResult && aiResult.confidence >= 70) {
+      console.log(`✅ AI detected header at row ${aiResult.headerRowIndex} (confidence: ${aiResult.confidence}%)`);
+      console.log(`📋 AI extracted columns:`, aiResult.columnNames);
+      
+      return {
+        index: aiResult.headerRowIndex,
+        columns: aiResult.columnNames,
+        confidence: aiResult.confidence
+      };
+    } else {
+      console.warn('⚠️ AI confidence too low, falling back to rule-based detection');
+    }
+  } catch (error) {
+    console.warn('⚠️ AI header detection failed, falling back to rule-based detection:', error);
+  }
+
+  // Fallback to rule-based detection
+  console.log('🔧 Using rule-based header detection...');
   let bestRowIndex = 0;
   let bestScore = 0;
 
@@ -249,10 +274,93 @@ function detectHeaderRow(rows: any[]): { index: number; columns: string[] } {
   // If no columns found, fallback to using keys
   if (columns.length === 0) {
     console.warn('⚠️ No non-empty column names found in detected header row, using object keys');
-    return { index: bestRowIndex, columns: allKeys };
+    return { index: bestRowIndex, columns: allKeys, confidence: 50 };
   }
 
-  return { index: bestRowIndex, columns };
+  return { index: bestRowIndex, columns, confidence: 60 };
+}
+
+/**
+ * Uses AI to detect the header row in complex spreadsheets
+ */
+async function detectHeaderRowWithAI(rows: any[]): Promise<{ headerRowIndex: number; columnNames: string[]; confidence: number; reasoning: string } | null> {
+  if (!openai) {
+    console.warn('OpenAI client not available');
+    return null;
+  }
+
+  // Prepare first 15 rows for analysis
+  const rowsToAnalyze = rows.slice(0, 15).map((row, idx) => ({
+    rowIndex: idx,
+    values: Object.values(row).map(v => {
+      if (v == null) return null;
+      const str = String(v);
+      // Truncate long values to save tokens
+      return str.length > 50 ? str.substring(0, 50) + '...' : str;
+    })
+  }));
+
+  const prompt = `Analyze this spreadsheet data and identify the header row.
+
+Spreadsheet rows (first 15):
+${JSON.stringify(rowsToAnalyze, null, 2)}
+
+Task:
+1. Identify which row contains the column headers (not data, not metadata, not section titles)
+2. Extract the exact column names from that row
+3. Provide confidence level (0-100)
+
+Common patterns:
+- Headers often come after metadata rows (titles, dates, "By:", "Sort:", etc.)
+- Headers contain field names like: Type, Date, Name, Customer, Product, Quantity, Amount, etc.
+- Headers are usually short text (not long descriptive sentences)
+- Data rows contain actual values (dates in MM/DD/YYYY format, decimal numbers, customer names)
+- Avoid rows with "Total", "Subtotal", "Inventory" unless they're clearly column headers
+
+Return ONLY valid JSON (no markdown, no explanation):
+{
+  "headerRowIndex": <number>,
+  "columnNames": [<array of exact column name strings from that row>],
+  "confidence": <number 0-100>,
+  "reasoning": "<brief 1-sentence explanation>"
+}`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      response_format: { type: 'json_object' }
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      console.warn('No response from OpenAI');
+      return null;
+    }
+
+    const result = JSON.parse(content);
+    
+    // Validate result structure
+    if (
+      typeof result.headerRowIndex !== 'number' ||
+      !Array.isArray(result.columnNames) ||
+      typeof result.confidence !== 'number'
+    ) {
+      console.warn('Invalid response structure from OpenAI:', result);
+      return null;
+    }
+
+    return {
+      headerRowIndex: result.headerRowIndex,
+      columnNames: result.columnNames,
+      confidence: result.confidence,
+      reasoning: result.reasoning || 'No reasoning provided'
+    };
+  } catch (error) {
+    console.error('Error calling OpenAI for header detection:', error);
+    return null;
+  }
 }
 
 /**
@@ -267,7 +375,7 @@ function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): 
   score += nonEmptyCells * 10;
 
   // 2. Check for common header keywords
-  const headerKeywords = /^(type|date|name|account|customer|product|item|quantity|qty|amount|revenue|price|total|memo|description|number|id|state|region|rep|representative|brand|sku|order|invoice|cases|units|sales|host|code)$/i;
+  const headerKeywords = /^(type|date|name|account|customer|product|item|quantity|qty|amount|revenue|price|total|memo|description|number|id|state|region|rep|representative|brand|sku|order|invoice|cases|units|sales)$/i;
   const keywordMatches = values.filter(v => 
     v != null && typeof v === 'string' && headerKeywords.test(v.trim())
   ).length;
@@ -290,7 +398,29 @@ function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): 
     score += 200; // Strong indicator of header row
   }
 
-  // 6. Penalize rows with mostly numeric values (likely data, not headers)
+  // 6. STRONGLY penalize rows with actual date VALUES (08/05/2025, 08/14/2025 - data rows)
+  const hasActualDateValues = values.filter(v => {
+    if (v == null || typeof v !== 'string') return false;
+    const str = v.trim();
+    // Match MM/DD/YYYY format (actual dates)
+    return /^\d{2}\/\d{2}\/\d{4}$/.test(str);
+  }).length;
+  if (hasActualDateValues > 0) {
+    score -= 300; // Heavy penalty - this is a data row!
+  }
+
+  // 7. Penalize rows with decimal numbers (42.25, 84.50 - likely data)
+  const hasDecimalValues = values.filter(v => {
+    if (v == null) return false;
+    const str = String(v).replace(/[$,\s]/g, '');
+    const num = parseFloat(str);
+    return !isNaN(num) && str.includes('.') && num > 0;
+  }).length;
+  if (hasDecimalValues >= 2) {
+    score -= 150; // Strong penalty for multiple decimal values
+  }
+
+  // 8. Penalize rows with mostly numeric values (likely data, not headers)
   const numericCells = values.filter(v => {
     if (v == null) return false;
     const str = String(v).replace(/[$,\s]/g, '');
@@ -300,7 +430,7 @@ function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): 
     score -= numericCells * 20;
   }
 
-  // 7. Penalize rows with section header keywords
+  // 9. Penalize rows with section header keywords
   const sectionKeywords = /^(total|inventory|summary|subtotal|grand total|report|category|share|dataset|user|cube|by|sort)$/i;
   const hasSectionKeyword = values.some(v => 
     v != null && typeof v === 'string' && sectionKeywords.test(v.trim())
@@ -309,7 +439,7 @@ function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): 
     score -= 100;
   }
 
-  // 8. Strongly penalize rows that start with metadata keywords
+  // 10. Strongly penalize rows that start with metadata keywords
   const metadataKeywords = /^(by|sort|total|dataset|user|cube|12 months|share):/i;
   const startsWithMetadata = values.some(v => 
     v != null && typeof v === 'string' && metadataKeywords.test(v.trim())
@@ -318,7 +448,7 @@ function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): 
     score -= 200; // Strong penalty for metadata rows
   }
 
-  // 9. Penalize rows that look like metadata (key: value pairs)
+  // 11. Penalize rows that look like metadata (key: value pairs)
   const looksLikeMetadata = values.some(v => 
     v != null && typeof v === 'string' && /^(dataset|user|cube|by|sort):/i.test(v.trim())
   );
@@ -326,7 +456,7 @@ function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): 
     score -= 150;
   }
 
-  // 10. Prefer rows that come after empty/sparse rows (common layout pattern)
+  // 12. Prefer rows that come after empty/sparse rows (common layout pattern)
   if (rowIndex > 0) {
     const prevRow = allRows[rowIndex - 1];
     const prevNonEmpty = Object.values(prevRow).filter(v => v != null && String(v).trim() !== '').length;
@@ -335,13 +465,13 @@ function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): 
     }
   }
 
-  // 11. Check for underscore-separated values (common header pattern)
+  // 13. Check for underscore-separated values (common header pattern)
   const hasUnderscores = values.filter(v => 
     v != null && typeof v === 'string' && v.includes('_')
   ).length;
   score += hasUnderscores * 15;
 
-  // 12. Boost score if row has high column diversity (different value types/patterns)
+  // 14. Boost score if row has high column diversity (different value types/patterns)
   const uniquePatterns = new Set(values.map(v => {
     if (v == null || String(v).trim() === '') return 'empty';
     const str = String(v);
@@ -355,9 +485,17 @@ function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): 
     score += 25; // Diverse column types suggest header row
   }
 
-  // 13. Penalize rows with very few non-empty cells (likely titles or section dividers)
+  // 15. Penalize rows with very few non-empty cells (likely titles or section dividers)
   if (nonEmptyCells < 3 && rowIndex < 10) {
     score -= 50;
+  }
+
+  // 16. Boost if row contains short text values typical of headers
+  const shortTextCount = values.filter(v => 
+    v != null && typeof v === 'string' && v.trim().length > 0 && v.trim().length <= 20
+  ).length;
+  if (shortTextCount >= nonEmptyCells * 0.7 && nonEmptyCells >= 4) {
+    score += 40; // Headers are usually short text
   }
 
   return score;
