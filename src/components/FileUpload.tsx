@@ -192,19 +192,24 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
         } : undefined;
 
         const detectionResult = await detectColumnMappingEnhanced(
-          rows.slice(0, 10),
+          rows,
           currentOrganization.id,
           selectedDistributor,
           file.name,
           aiTrainingConfig
         );
 
-        console.log('🗒️ Setting preview data with headers:', headers);
+        // Use the intelligently detected columns from the header detection module
+        // instead of the parser's headers (which might be from wrong row or __EMPTY_ placeholders)
+        const detectedColumns = detectionResult.columns || headers;
+        
+        console.log('🗒️ Detected columns from intelligent header detection:', detectedColumns);
+        console.log('📊 Original parser headers:', headers);
 
         const previewDataToSet = {
           file,
           rows,
-          headers,
+          headers: detectedColumns, // Use detected columns, not parser headers
           mapping: detectionResult.mapping,
           confidence: detectionResult.confidence,
           method: detectionResult.method,

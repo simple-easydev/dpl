@@ -25,6 +25,7 @@ export interface DetectionResult {
   mapping: ColumnMapping;
   confidence: number;
   method: 'openai' | 'synonym' | 'pattern' | 'learned' | 'hybrid' | 'ai_training';
+  columns?: string[]; // Detected column names from header row
   details: {
     [key: string]: {
       column: string;
@@ -172,10 +173,14 @@ export async function detectColumnMappingEnhanced(
   }
 
   bestResult = sanitizeDetectionResult(bestResult);
+  
+  // Include the detected column names in the result
+  bestResult.columns = columns;
 
   console.log('🎯 Final mapping:', bestResult.mapping);
   console.log('📈 Final confidence:', bestResult.confidence);
   console.log('🔧 Detection method:', bestResult.method);
+  console.log('📋 Detected columns:', columns);
 
   return bestResult;
 }
