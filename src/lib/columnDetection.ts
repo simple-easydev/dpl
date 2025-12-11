@@ -282,83 +282,55 @@ async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: s
 
 /**
  * Uses AI to detect the header row in complex spreadsheets
+ * Calls Supabase Edge Function to keep OpenAI API key secure
  */
 async function detectHeaderRowWithAI(rows: any[]): Promise<{ headerRowIndex: number; columnNames: string[]; confidence: number; reasoning: string } | null> {
-  if (!openai) {
-    console.warn('OpenAI client not available');
-    return null;
-  }
-
-  // Prepare first 15 rows for analysis
-  const rowsToAnalyze = rows.slice(0, 15).map((row, idx) => ({
-    rowIndex: idx,
-    values: Object.values(row).map(v => {
-      if (v == null) return null;
-      const str = String(v);
-      // Truncate long values to save tokens
-      return str.length > 50 ? str.substring(0, 50) + '...' : str;
-    })
-  }));
-
-  const prompt = `Analyze this spreadsheet data and identify the header row.
-
-Spreadsheet rows (first 15):
-${JSON.stringify(rowsToAnalyze, null, 2)}
-
-Task:
-1. Identify which row contains the column headers (not data, not metadata, not section titles)
-2. Extract the exact column names from that row
-3. Provide confidence level (0-100)
-
-Common patterns:
-- Headers often come after metadata rows (titles, dates, "By:", "Sort:", etc.)
-- Headers contain field names like: Type, Date, Name, Customer, Product, Quantity, Amount, etc.
-- Headers are usually short text (not long descriptive sentences)
-- Data rows contain actual values (dates in MM/DD/YYYY format, decimal numbers, customer names)
-- Avoid rows with "Total", "Subtotal", "Inventory" unless they're clearly column headers
-
-Return ONLY valid JSON (no markdown, no explanation):
-{
-  "headerRowIndex": <number>,
-  "columnNames": [<array of exact column name strings from that row>],
-  "confidence": <number 0-100>,
-  "reasoning": "<brief 1-sentence explanation>"
-}`;
-
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      response_format: { type: 'json_object' }
+    // Prepare first 15 rows for analysis
+    const rowsToAnalyze = rows.slice(0, 15).map((row, idx) => ({
+      rowIndex: idx,
+      values: Object.values(row).map(v => {
+        if (v == null) return null;
+        const str = String(v);
+        // Truncate long values to save tokens
+        return str.length > 50 ? str.substring(0, 50) + '...' : str;
+      })
+    }));
+
+    console.log('🔐 Calling Supabase Edge Function for secure AI header detection...');
+
+    const { data, error } = await supabase.functions.invoke('detect-header-row', {
+      body: { rows: rowsToAnalyze }
     });
 
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      console.warn('No response from OpenAI');
+    if (error) {
+      console.error('Edge Function error:', error);
       return null;
     }
 
-    const result = JSON.parse(content);
-    
+    if (!data) {
+      console.warn('No response from Edge Function');
+      return null;
+    }
+
     // Validate result structure
     if (
-      typeof result.headerRowIndex !== 'number' ||
-      !Array.isArray(result.columnNames) ||
-      typeof result.confidence !== 'number'
+      typeof data.headerRowIndex !== 'number' ||
+      !Array.isArray(data.columnNames) ||
+      typeof data.confidence !== 'number'
     ) {
-      console.warn('Invalid response structure from OpenAI:', result);
+      console.warn('Invalid response structure from Edge Function:', data);
       return null;
     }
 
     return {
-      headerRowIndex: result.headerRowIndex,
-      columnNames: result.columnNames,
-      confidence: result.confidence,
-      reasoning: result.reasoning || 'No reasoning provided'
+      headerRowIndex: data.headerRowIndex,
+      columnNames: data.columnNames,
+      confidence: data.confidence,
+      reasoning: data.reasoning || 'No reasoning provided'
     };
   } catch (error) {
-    console.error('Error calling OpenAI for header detection:', error);
+    console.error('Error calling Edge Function for header detection:', error);
     return null;
   }
 }
@@ -640,118 +612,70 @@ function detectWithAITrainingMappings(
   };
 }
 
+/**
+ * Uses AI to detect column mappings via Supabase Edge Function
+ * Keeps OpenAI API key secure on server-side
+ */
 async function detectWithOpenAI(
   aiClient: any,
   sampleRows: any[],
   synonyms: FieldSynonym[],
   aiTrainingConfig?: { field_mappings?: Record<string, any>; parsing_instructions?: string; orientation?: string }
 ): Promise<DetectionResult> {
-  const columns = Object.keys(sampleRows[0] || {});
-  const sampleData = sampleRows.slice(0, 5);
+  try {
+    const columns = Object.keys(sampleRows[0] || {});
+    const sampleData = sampleRows.slice(0, 5);
 
-  const synonymsByField = synonyms.reduce((acc, s) => {
-    if (!acc[s.field_type]) acc[s.field_type] = [];
-    acc[s.field_type].push(s.synonym);
-    return acc;
-  }, {} as Record<string, string[]>);
+    const synonymsByField = synonyms.reduce((acc, s) => {
+      if (!acc[s.field_type]) acc[s.field_type] = [];
+      acc[s.field_type].push(s.synonym);
+      return acc;
+    }, {} as Record<string, string[]>);
 
-  const synonymExamples = Object.entries(synonymsByField)
-    .map(([field, syns]) => `  ${field}: ${syns.slice(0, 10).join(', ')}`)
-    .join('\n');
+    console.log('🔐 Calling Supabase Edge Function for secure AI column mapping...');
 
-  let prompt = `You are an expert at analyzing sales data files and identifying column mappings.
+    const { data, error } = await supabase.functions.invoke('detect-column-mapping', {
+      body: {
+        columns,
+        sampleData,
+        synonymsByField,
+        aiTrainingConfig,
+      }
+    });
 
-Available columns in this file:
-${columns.join(', ')}
-
-Sample data (first 5 rows):
-${JSON.stringify(sampleData, null, 2)}
-
-Common synonyms for each field type:
-${synonymExamples}
-
-IMPORTANT: For depletion reports, only "account" and "product" are REQUIRED fields.
-"date" and "revenue" are OPTIONAL - many depletion reports only track product movement (quantity) without financial data.
-
-Your task: Identify which columns correspond to each field type. Consider:
-1. Exact matches with synonyms (e.g., "Cases" = quantity, "Units" = quantity)
-2. Partial matches (e.g., "Total Amount" contains "amount")
-3. The actual data values in the sample rows
-4. Context clues from other columns
-5. If date or revenue columns are not clearly present, it's acceptable to leave them null`;
-
-  if (aiTrainingConfig?.parsing_instructions) {
-    prompt += `\n\nIMPORTANT - DISTRIBUTOR-SPECIFIC AI TRAINING INSTRUCTIONS:
-${aiTrainingConfig.parsing_instructions}
-
-Please apply these instructions when mapping columns. These instructions describe the specific format and conventions used by this distributor.`;
-  }
-
-  if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
-    prompt += `\n\nFIELD MAPPING HINTS FROM AI TRAINING:
-${JSON.stringify(aiTrainingConfig.field_mappings, null, 2)}
-
-Use these learned patterns to help identify column mappings.`;
-  }
-
-  prompt += `
-
-Return a JSON object with this structure:
-{
-  "mapping": {
-    "date": "column_name_or_null",
-    "revenue": "column_name_or_null",
-    "account": "column_name_or_null",
-    "product": "column_name_or_null",
-    "quantity": "column_name_or_null",
-    "order_id": "column_name_or_null",
-    "category": "column_name_or_null",
-    "region": "column_name_or_null",
-    "representative": "column_name_or_null"
-  },
-  "confidence": confidence
-}
-
-Rules:
-- Only include fields you can confidently identify
-- Set confidence between 0.0 and 1.0 based on how certain you are
-- For quantity: "Cases", "Units", "Qty", "Boxes", "·" (bullet) all mean quantity
-- For revenue: "Amount", "Total", "Sales", "Extended Price" all mean revenue
-- Return ONLY the JSON object, no explanation`;
-
-  const response = await aiClient.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      {
-        role: 'system',
-        content: 'You are a precise data mapping assistant. Return only valid JSON with no additional text.',
-      },
-      { role: 'user', content: prompt },
-    ],
-    temperature: 0.1,
-    response_format: { type: 'json_object' },
-  });
-
-  const content = response.choices[0]?.message?.content || '{"mapping": {}, "confidence": 0}';
-  const parsed = JSON.parse(content.replace(/```json\n?|\n?```/g, ''));
-
-  const details: any = {};
-  Object.entries(parsed.mapping || {}).forEach(([field, column]) => {
-    if (column) {
-      details[field] = {
-        column,
-        confidence: parsed.confidence || 0.8,
-        source: 'openai',
-      };
+    if (error) {
+      console.error('Edge Function error:', error);
+      throw new Error(`Edge Function error: ${error.message}`);
     }
-  });
 
-  return {
-    mapping: parsed.mapping || {},
-    confidence: parsed.confidence || 0.8,
-    method: 'openai',
-    details,
-  };
+    if (!data || !data.mapping) {
+      console.warn('No valid response from Edge Function');
+      throw new Error('No valid response from Edge Function');
+    }
+
+    const details: any = {};
+    Object.entries(data.mapping || {}).forEach(([field, column]) => {
+      if (column) {
+        details[field] = {
+          column,
+          confidence: data.confidence || 0.8,
+          source: 'openai',
+        };
+      }
+    });
+
+    console.log(`✅ OpenAI column mapping via Edge Function: ${(data.confidence * 100).toFixed(0)}% confidence`);
+
+    return {
+      mapping: data.mapping || {},
+      confidence: data.confidence || 0.8,
+      method: 'openai',
+      details,
+    };
+  } catch (error) {
+    console.error('Error calling Edge Function for column mapping:', error);
+    throw error;
+  }
 }
 
 function detectWithSynonyms(
