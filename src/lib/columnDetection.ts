@@ -62,8 +62,19 @@ export async function detectColumnMappingEnhanced(
     };
   }
 
-  const columns = Object.keys(sampleRows[0]);
-  console.log('🔍 Detecting columns:', columns);
+  // Detect the actual header row (handles complex layouts with titles/groupings above headers)
+  const headerDetection = detectHeaderRow(sampleRows);
+  const headerRowIndex = headerDetection.index;
+  const columns = headerDetection.columns;
+  
+  console.log(`📋 Detected header row at index ${headerRowIndex}:`, columns);
+  
+  // Use rows after the header row for data analysis
+  const dataRows = sampleRows.slice(headerRowIndex + 1).filter(row => {
+    // Filter out empty rows and summary/total rows
+    const values = Object.values(row).filter(v => v != null && v !== '');
+    return values.length > 0 && !isLikelySummaryRow(row);
+  });
 
   const synonyms = await loadSynonyms(organizationId);
   const learnedMappings = await loadLearnedMappings(organizationId, distributorId);
@@ -84,7 +95,7 @@ export async function detectColumnMappingEnhanced(
   if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
     console.log('🎓 Found AI training field mappings, attempting direct mapping...');
     try {
-      aiTrainingResult = sanitizeDetectionResult(detectWithAITrainingMappings(columns, sampleRows, aiTrainingConfig.field_mappings));
+      aiTrainingResult = sanitizeDetectionResult(detectWithAITrainingMappings(columns, dataRows, aiTrainingConfig.field_mappings));
       if (aiTrainingResult.confidence > bestResult.confidence) {
         bestResult = aiTrainingResult;
         console.log('✅ AI training mapping applied with confidence:', aiTrainingResult.confidence);
@@ -115,7 +126,7 @@ export async function detectColumnMappingEnhanced(
       console.log('📖 Using AI training instructions from configuration');
     }
     try {
-      aiResult = sanitizeDetectionResult(await detectWithOpenAI(aiClient, sampleRows, synonyms, aiTrainingConfig));
+      aiResult = sanitizeDetectionResult(await detectWithOpenAI(aiClient, dataRows, synonyms, aiTrainingConfig));
       if (aiResult.confidence > bestResult.confidence) {
         bestResult = aiResult;
         console.log('✅ OpenAI detection succeeded with confidence:', aiResult.confidence);
@@ -127,7 +138,7 @@ export async function detectColumnMappingEnhanced(
 
   console.log('🔤 Attempting synonym-based detection...');
   try {
-    synonymResult = sanitizeDetectionResult(detectWithSynonyms(columns, sampleRows, synonyms));
+    synonymResult = sanitizeDetectionResult(detectWithSynonyms(columns, dataRows, synonyms));
     if (synonymResult.confidence > bestResult.confidence) {
       bestResult = synonymResult;
       console.log('✅ Synonym detection succeeded with confidence:', synonymResult.confidence);
@@ -138,7 +149,7 @@ export async function detectColumnMappingEnhanced(
 
   console.log('📊 Attempting pattern-based detection...');
   try {
-    patternResult = sanitizeDetectionResult(detectWithPatterns(columns, sampleRows));
+    patternResult = sanitizeDetectionResult(detectWithPatterns(columns, dataRows));
     if (patternResult.confidence > bestResult.confidence) {
       bestResult = patternResult;
       console.log('✅ Pattern detection succeeded with confidence:', patternResult.confidence);
@@ -183,6 +194,183 @@ async function loadSynonyms(organizationId: string): Promise<FieldSynonym[]> {
     .eq('is_active', true);
 
   return [...(globalSynonyms || []), ...(orgSynonyms || [])];
+}
+
+/**
+ * Detects the actual header row in complex spreadsheets
+ * Handles cases where first rows contain titles, groupings, or empty cells
+ */
+function detectHeaderRow(rows: any[]): { index: number; columns: string[] } {
+
+  if (rows.length === 0) {
+    return { index: 0, columns: [] };
+  }
+
+  let bestRowIndex = 0;
+  let bestScore = 0;
+
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const row = rows[i];
+    const values = Object.values(row);
+    
+    const score = calculateHeaderScore(values, rows, i);
+
+    console.log(`  Row ${i}: score=${score}, values:`, values.slice(0, 5));
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRowIndex = i;
+    }
+  }
+
+  const selectedRow = rows[bestRowIndex];
+  
+  // Extract actual column names from the header row's VALUES, not keys
+  // The keys might be generic (__EMPTY_, A, B, C) but values contain real names
+  const allKeys = Object.keys(selectedRow);
+  const columns: string[] = [];
+  
+  allKeys.forEach(key => {
+    const headerValue = selectedRow[key];
+    if (headerValue != null && String(headerValue).trim() !== '') {
+      // Use the actual header value as the column name
+      columns.push(String(headerValue).trim());
+    }
+  });
+
+  console.log(`🎯 Selected row ${bestRowIndex} as header (score: ${bestScore})`);
+  console.log(`📋 Extracted ${columns.length} column names:`, columns.slice(0, 10));
+
+  // If no columns found, fallback to using keys
+  if (columns.length === 0) {
+    console.warn('⚠️ No non-empty column names found in detected header row, using object keys');
+    return { index: bestRowIndex, columns: allKeys };
+  }
+
+  return { index: bestRowIndex, columns };
+}
+
+/**
+ * Calculates a score for how likely a row is to be a header row
+ * Higher scores indicate more header-like characteristics
+ */
+function calculateHeaderScore(values: any[], allRows: any[], rowIndex: number): number {
+  let score = 0;
+
+  // 1. Non-empty cell count (headers usually have many columns filled)
+  const nonEmptyCells = values.filter(v => v != null && String(v).trim() !== '').length;
+  score += nonEmptyCells * 10;
+
+  // 2. Check for common header keywords
+  const headerKeywords = /^(type|date|name|account|customer|product|item|quantity|qty|amount|revenue|price|total|memo|description|number|id|state|region|rep|representative|brand|sku|order|invoice|cases|units|sales|host|code)$/i;
+  const keywordMatches = values.filter(v => 
+    v != null && typeof v === 'string' && headerKeywords.test(v.trim())
+  ).length;
+  score += keywordMatches * 50;
+
+  // 3. Check for column names with underscores (Customer_Name, Product_Name, etc.)
+  const hasColumnNamingPattern = values.filter(v => 
+    v != null && typeof v === 'string' && /^[A-Z][a-z]+(_[A-Z][a-z]+)+/i.test(v.trim())
+  ).length;
+  score += hasColumnNamingPattern * 40;
+
+  // 4. Check for date-like column headers (01/2025, 02/2025, etc.)
+  const hasDateColumns = values.filter(v => 
+    v != null && typeof v === 'string' && /^\d{2}\/\d{4}$/.test(v.trim())
+  ).length;
+  score += hasDateColumns * 30;
+
+  // 5. Strongly boost if row has MANY date columns (typical of time-series data)
+  if (hasDateColumns >= 5) {
+    score += 200; // Strong indicator of header row
+  }
+
+  // 6. Penalize rows with mostly numeric values (likely data, not headers)
+  const numericCells = values.filter(v => {
+    if (v == null) return false;
+    const str = String(v).replace(/[$,\s]/g, '');
+    return !isNaN(parseFloat(str)) && str !== '';
+  }).length;
+  if (numericCells > nonEmptyCells * 0.6) {
+    score -= numericCells * 20;
+  }
+
+  // 7. Penalize rows with section header keywords
+  const sectionKeywords = /^(total|inventory|summary|subtotal|grand total|report|category|share|dataset|user|cube|by|sort)$/i;
+  const hasSectionKeyword = values.some(v => 
+    v != null && typeof v === 'string' && sectionKeywords.test(v.trim())
+  );
+  if (hasSectionKeyword && nonEmptyCells < 5) {
+    score -= 100;
+  }
+
+  // 8. Strongly penalize rows that start with metadata keywords
+  const metadataKeywords = /^(by|sort|total|dataset|user|cube|12 months|share):/i;
+  const startsWithMetadata = values.some(v => 
+    v != null && typeof v === 'string' && metadataKeywords.test(v.trim())
+  );
+  if (startsWithMetadata) {
+    score -= 200; // Strong penalty for metadata rows
+  }
+
+  // 9. Penalize rows that look like metadata (key: value pairs)
+  const looksLikeMetadata = values.some(v => 
+    v != null && typeof v === 'string' && /^(dataset|user|cube|by|sort):/i.test(v.trim())
+  );
+  if (looksLikeMetadata) {
+    score -= 150;
+  }
+
+  // 10. Prefer rows that come after empty/sparse rows (common layout pattern)
+  if (rowIndex > 0) {
+    const prevRow = allRows[rowIndex - 1];
+    const prevNonEmpty = Object.values(prevRow).filter(v => v != null && String(v).trim() !== '').length;
+    if (prevNonEmpty < 3) {
+      score += 30; // Boost if previous row was sparse
+    }
+  }
+
+  // 11. Check for underscore-separated values (common header pattern)
+  const hasUnderscores = values.filter(v => 
+    v != null && typeof v === 'string' && v.includes('_')
+  ).length;
+  score += hasUnderscores * 15;
+
+  // 12. Boost score if row has high column diversity (different value types/patterns)
+  const uniquePatterns = new Set(values.map(v => {
+    if (v == null || String(v).trim() === '') return 'empty';
+    const str = String(v);
+    if (/^\d{2}\/\d{4}$/.test(str)) return 'date_column';
+    if (/^[A-Z][a-z]+(_[A-Z][a-z]+)+$/i.test(str)) return 'underscore_name';
+    if (/^\d+$/.test(str)) return 'number';
+    if (typeof v === 'string') return 'text';
+    return 'other';
+  }));
+  if (uniquePatterns.size >= 3) {
+    score += 25; // Diverse column types suggest header row
+  }
+
+  // 13. Penalize rows with very few non-empty cells (likely titles or section dividers)
+  if (nonEmptyCells < 3 && rowIndex < 10) {
+    score -= 50;
+  }
+
+  return score;
+}
+
+/**
+ * Checks if a row is likely a summary/total row (should be excluded from sample data)
+ */
+function isLikelySummaryRow(row: any): boolean {
+  const values = Object.values(row);
+  const firstValue = values.find(v => v != null && String(v).trim() !== '');
+  
+  if (firstValue && typeof firstValue === 'string') {
+    const summaryKeywords = /^(total|subtotal|grand total|sum|summary|inventory|category|section|group)/i;
+    return summaryKeywords.test(firstValue.trim());
+  }
+  
+  return false;
 }
 
 async function loadLearnedMappings(
