@@ -284,6 +284,7 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
         unitType,
         parsingWarnings: previewData.parsingWarnings,
         originalFile: previewData.file,
+        headers: previewData.headers,
       });
 
       const successRate = ((result.successRate || 1) * 100).toFixed(1);
@@ -333,6 +334,7 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
         unitType: pendingData.unitType || 'cases',
         parsingWarnings: previewData?.parsingWarnings,
         originalFile: previewData?.file,
+        headers: previewData?.headers,
       });
 
       const successRate = ((result.successRate || 1) * 100).toFixed(1);

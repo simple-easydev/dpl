@@ -34,6 +34,7 @@ interface ProcessOptions {
   unitType?: 'cases' | 'bottles';
   parsingWarnings?: any;
   originalFile?: File;
+  headers?: string[];
 }
 
 async function storeFileInStorage(
@@ -322,6 +323,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
           mapping: manualMapping,
           confidence: 1.0,
           method: 'manual',
+          columns: options.headers || Object.keys(rows[0] || {}),
           details: {}
         };
       } else {
@@ -370,8 +372,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
       const restructuredRows = rows.map(row => {
         const restructured: Record<string, any> = {};
         const originalKeys = Object.keys(row);
-        
-        detectedColumns.forEach((colName, index) => {
+        detectedColumns.forEach((colName: string, index: number) => {
           if (index < originalKeys.length) {
             const originalKey = originalKeys[index];
             restructured[colName] = row[originalKey];
@@ -382,6 +383,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
       });
 
       console.log(`📝 Transforming ${restructuredRows.length} rows...`);
+      console.log({ restructuredRows });
       const transformResults = restructuredRows.map((row, index) => ({
         record: transformRow(row, columnMapping, organizationId, upload.id, distributorName, organizationName, distributorState, defaultPeriod, unitType),
         rowIndex: index
