@@ -35,6 +35,7 @@ interface ProcessOptions {
   parsingWarnings?: any;
   originalFile?: File;
   headers?: string[];
+  columnIndices?: number[];
 }
 
 async function storeFileInStorage(
@@ -66,8 +67,20 @@ async function storeFileInStorage(
 }
 
 export async function processAndStoreSalesData(options: ProcessOptions) {
-  const { organizationId, userId, filename, fileSize, rows, distributorId, pdfFile, manualMapping, defaultPeriod, unitType = 'cases', parsingWarnings: inputParsingWarnings, originalFile } = options;
-
+  const { organizationId, 
+    userId, 
+    filename, 
+    fileSize, 
+    rows, 
+    distributorId, 
+    pdfFile, 
+    manualMapping, 
+    defaultPeriod, 
+    unitType = 'cases', 
+    parsingWarnings: inputParsingWarnings, 
+    originalFile, 
+    columnIndices
+  } = options;
   const { data: distributor, error: distributorError } = await supabase
     .from('distributors')
     .select('name, state')
@@ -307,12 +320,6 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
 
       console.log(`🤖 AI Training Config for Excel/CSV: ${aiConfig ? aiConfig.configuration_name : 'none (generic detection)'}`);
 
-      const aiTrainingConfig: AITrainingConfiguration | undefined = aiConfig ? {
-        field_mappings: aiConfig.field_mappings as Record<string, any>,
-        parsing_instructions: aiConfig.parsing_instructions,
-        orientation: aiConfig.orientation,
-      } : undefined;
-
       if (manualMapping) {
         columnMapping = manualMapping;
         confidence = 1.0;
@@ -324,9 +331,17 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
           confidence: 1.0,
           method: 'manual',
           columns: options.headers || Object.keys(rows[0] || {}),
+          columnIndices:columnIndices || [],
           details: {}
         };
       } else {
+
+        const aiTrainingConfig: AITrainingConfiguration | undefined = aiConfig ? {
+          field_mappings: aiConfig.field_mappings as Record<string, any>,
+          parsing_instructions: aiConfig.parsing_instructions,
+          orientation: aiConfig.orientation,
+        } : undefined;
+
         detectionResult = await detectColumnMappingEnhanced(
           rows,
           organizationId,
@@ -369,13 +384,13 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
       const detectedColumns = detectionResult?.columns || Object.keys(rows[0] || {});
       console.log('📋 Detected column names:', detectedColumns);
       
-      const restructuredRows = rows.map(row => {
+      const restructuredRows = rows.map((row) => {
         const restructured: Record<string, any> = {};
         const rowValues = Object.values(row);
         
         detectedColumns.forEach((colName: string, index: number) => {
           if (index < rowValues.length) {
-            restructured[colName] = rowValues[index];
+            restructured[colName] = rowValues[columnIndices ? columnIndices[index] : index];
           }
         });
         
@@ -384,6 +399,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
 
       console.log(`📝 Transforming ${restructuredRows.length} rows...`);
       console.log({ restructuredRows });
+      
       const transformResults = restructuredRows.map((row, index) => ({
         record: transformRow(row, columnMapping, organizationId, upload.id, distributorName, organizationName, distributorState, defaultPeriod, unitType),
         rowIndex: index

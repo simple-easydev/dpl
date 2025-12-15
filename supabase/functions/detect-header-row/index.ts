@@ -13,6 +13,7 @@ interface HeaderDetectionRequest {
 interface HeaderDetectionResponse {
   headerRowIndex: number;
   columnNames: string[];
+  columnIndices: number[]; // Original position/index of each column in the row
   confidence: number;
   reasoning: string;
 }
@@ -45,8 +46,9 @@ ${JSON.stringify(rows, null, 2)}
 
 Task:
 1. Identify which row contains the column headers (not data, not metadata, not section titles)
-2. Extract the exact column names from that row
-3. Provide confidence level (0-100)
+2. Extract the exact column names from that row (skip empty/null values)
+3. Track the original index/position of each extracted column in the row
+4. Provide confidence level (0-100)
 
 Common patterns:
 - Headers often come after metadata rows (titles, dates, "By:", "Sort:", etc.)
@@ -54,11 +56,17 @@ Common patterns:
 - Headers are usually short text (not long descriptive sentences)
 - Data rows contain actual values (dates in MM/DD/YYYY format, decimal numbers, customer names)
 - Avoid rows with "Total", "Subtotal", "Inventory" unless they're clearly column headers
+- Some columns may be empty/null - skip them but track the positions of non-empty columns
+
+Example: If row values are ["Customer_Name", null, "Product_Name", "", "Quantity"]
+Then: columnNames should be ["Customer_Name", "Product_Name", "Quantity"]
+And: columnIndices should be [0, 2, 4]
 
 Return ONLY valid JSON (no markdown, no explanation):
 {
   "headerRowIndex": <number>,
-  "columnNames": [<array of exact column name strings from that row>],
+  "columnNames": [<array of exact column name strings from that row, excluding empty values>],
+  "columnIndices": [<array of original position indices for each column name>],
   "confidence": <number 0-100>,
   "reasoning": "<brief 1-sentence explanation>"
 }`;
@@ -98,13 +106,21 @@ Return ONLY valid JSON (no markdown, no explanation):
     if (
       typeof result.headerRowIndex !== "number" ||
       !Array.isArray(result.columnNames) ||
+      !Array.isArray(result.columnIndices) ||
       typeof result.confidence !== "number"
     ) {
       console.error("Invalid response structure:", result);
       throw new Error("Invalid response structure from OpenAI");
     }
 
+    // Validate columnNames and columnIndices have same length
+    if (result.columnNames.length !== result.columnIndices.length) {
+      console.error("Mismatched array lengths:", result);
+      throw new Error("columnNames and columnIndices must have same length");
+    }
+
     console.log(`✅ Header detected at row ${result.headerRowIndex} with ${result.confidence}% confidence`);
+    console.log(`📋 Found ${result.columnNames.length} columns at positions:`, result.columnIndices);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

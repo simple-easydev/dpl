@@ -26,6 +26,7 @@ export interface DetectionResult {
   confidence: number;
   method: 'openai' | 'synonym' | 'pattern' | 'learned' | 'hybrid' | 'ai_training';
   columns?: string[]; // Detected column names from header row
+  columnIndices?:number[];
   details: {
     [key: string]: {
       column: string;
@@ -67,6 +68,7 @@ export async function detectColumnMappingEnhanced(
   const headerDetection = await detectHeaderRow(sampleRows);
   const headerRowIndex = headerDetection.index;
   const columns = headerDetection.columns;
+  const columnIndices = headerDetection.columnIndices;
   const headerConfidence = headerDetection.confidence;
   
   console.log(`📋 Detected header row at index ${headerRowIndex} (confidence: ${headerConfidence}%):`, columns);
@@ -79,7 +81,7 @@ export async function detectColumnMappingEnhanced(
   });
 
   const synonyms = await loadSynonyms(organizationId);
-  const learnedMappings = await loadLearnedMappings(organizationId, distributorId);
+  // const learnedMappings = await loadLearnedMappings(organizationId, distributorId);
 
   let bestResult: DetectionResult = {
     mapping: {},
@@ -177,6 +179,7 @@ export async function detectColumnMappingEnhanced(
   
   // Include the detected column names in the result
   bestResult.columns = columns;
+  bestResult.columnIndices = columnIndices;
 
   console.log('🎯 Final mapping:', bestResult.mapping);
   console.log('📈 Final confidence:', bestResult.confidence);
@@ -206,10 +209,10 @@ async function loadSynonyms(organizationId: string): Promise<FieldSynonym[]> {
  * Detects the actual header row in complex spreadsheets using AI
  * Handles cases where first rows contain titles, groupings, or empty cells
  */
-async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: string[]; confidence: number }> {
+async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: string[]; confidence: number, columnIndices:number[] }> {
 
   if (rows.length === 0) {
-    return { index: 0, columns: [], confidence: 0 };
+    return { index: 0, columns: [], confidence: 0, columnIndices:[] };
   }
 
   // Use AI to detect header row
@@ -221,12 +224,15 @@ async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: s
     if (aiResult && aiResult.confidence >= 70) {
       console.log(`✅ AI detected header at row ${aiResult.headerRowIndex} (confidence: ${aiResult.confidence}%)`);
       console.log(`📋 AI extracted columns:`, aiResult.columnNames);
+      console.log(`📍 AI column indices:`, aiResult.columnIndices);
       
       return {
         index: aiResult.headerRowIndex,
         columns: aiResult.columnNames,
+        columnIndices: aiResult.columnIndices,
         confidence: aiResult.confidence
       };
+
     } else {
       console.warn('⚠️ AI confidence too low, falling back to rule-based detection');
     }
@@ -234,57 +240,59 @@ async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: s
     console.warn('⚠️ AI header detection failed, falling back to rule-based detection:', error);
   }
 
+  return { index: 0, columns: [], confidence: 0, columnIndices:[] };
+
   // Fallback to rule-based detection
-  console.log('🔧 Using rule-based header detection...');
-  let bestRowIndex = 0;
-  let bestScore = 0;
+  // console.log('🔧 Using rule-based header detection...');
+  // let bestRowIndex = 0;
+  // let bestScore = 0;
 
-  for (let i = 0; i < Math.min(rows.length, 15); i++) {
-    const row = rows[i];
-    const values = Object.values(row);
+  // for (let i = 0; i < Math.min(rows.length, 15); i++) {
+  //   const row = rows[i];
+  //   const values = Object.values(row);
     
-    const score = calculateHeaderScore(values, rows, i);
+  //   const score = calculateHeaderScore(values, rows, i);
 
-    console.log(`  Row ${i}: score=${score}, values:`, values.slice(0, 5));
+  //   console.log(`  Row ${i}: score=${score}, values:`, values.slice(0, 5));
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestRowIndex = i;
-    }
-  }
+  //   if (score > bestScore) {
+  //     bestScore = score;
+  //     bestRowIndex = i;
+  //   }
+  // }
 
-  const selectedRow = rows[bestRowIndex];
+  // const selectedRow = rows[bestRowIndex];
   
-  // Extract actual column names from the header row's VALUES, not keys
-  // The keys might be generic (__EMPTY_, A, B, C) but values contain real names
-  const allKeys = Object.keys(selectedRow);
-  const columns: string[] = [];
+  // // Extract actual column names from the header row's VALUES, not keys
+  // // The keys might be generic (__EMPTY_, A, B, C) but values contain real names
+  // const allKeys = Object.keys(selectedRow);
+  // const columns: string[] = [];
   
-  allKeys.forEach(key => {
-    const headerValue = selectedRow[key];
-    if (headerValue != null && String(headerValue).trim() !== '') {
-      // Use the actual header value as the column name
-      columns.push(String(headerValue).trim());
-    }
-  });
+  // allKeys.forEach(key => {
+  //   const headerValue = selectedRow[key];
+  //   if (headerValue != null && String(headerValue).trim() !== '') {
+  //     // Use the actual header value as the column name
+  //     columns.push(String(headerValue).trim());
+  //   }
+  // });
 
-  console.log(`🎯 Selected row ${bestRowIndex} as header (score: ${bestScore})`);
-  console.log(`📋 Extracted ${columns.length} column names:`, columns.slice(0, 10));
+  // console.log(`🎯 Selected row ${bestRowIndex} as header (score: ${bestScore})`);
+  // console.log(`📋 Extracted ${columns.length} column names:`, columns.slice(0, 10));
 
-  // If no columns found, fallback to using keys
-  if (columns.length === 0) {
-    console.warn('⚠️ No non-empty column names found in detected header row, using object keys');
-    return { index: bestRowIndex, columns: allKeys, confidence: 50 };
-  }
+  // // If no columns found, fallback to using keys
+  // if (columns.length === 0) {
+  //   console.warn('⚠️ No non-empty column names found in detected header row, using object keys');
+  //   return { index: bestRowIndex, columns: allKeys, confidence: 50 };
+  // }
 
-  return { index: bestRowIndex, columns, confidence: 60 };
+  // return { index: bestRowIndex, columns, confidence: 60 };
 }
 
 /**
  * Uses AI to detect the header row in complex spreadsheets
  * Calls Supabase Edge Function to keep OpenAI API key secure
  */
-async function detectHeaderRowWithAI(rows: any[]): Promise<{ headerRowIndex: number; columnNames: string[]; confidence: number; reasoning: string } | null> {
+async function detectHeaderRowWithAI(rows: any[]): Promise<{ headerRowIndex: number; columnNames: string[]; columnIndices: number[]; confidence: number; reasoning: string } | null> {
   try {
     // Prepare first 15 rows for analysis
     const rowsToAnalyze = rows.slice(0, 15).map((row, idx) => ({
@@ -317,6 +325,7 @@ async function detectHeaderRowWithAI(rows: any[]): Promise<{ headerRowIndex: num
     if (
       typeof data.headerRowIndex !== 'number' ||
       !Array.isArray(data.columnNames) ||
+      !Array.isArray(data.columnIndices) ||
       typeof data.confidence !== 'number'
     ) {
       console.warn('Invalid response structure from Edge Function:', data);
@@ -326,6 +335,7 @@ async function detectHeaderRowWithAI(rows: any[]): Promise<{ headerRowIndex: num
     return {
       headerRowIndex: data.headerRowIndex,
       columnNames: data.columnNames,
+      columnIndices: data.columnIndices,
       confidence: data.confidence,
       reasoning: data.reasoning || 'No reasoning provided'
     };
