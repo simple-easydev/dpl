@@ -50,6 +50,22 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Restructure sample data to use actual column names as keys
+    // Original data has generic keys (__EMPTY, __EMPTY_1), we need to map them to real column names
+    const restructuredSampleData = sampleData.map(row => {
+      const restructured: Record<string, any> = {};
+      const originalKeys = Object.keys(row);
+      
+      columns.forEach((colName, index) => {
+        if (index < originalKeys.length) {
+          const originalKey = originalKeys[index];
+          restructured[colName] = row[originalKey];
+        }
+      });
+      
+      return restructured;
+    });
+
     // Build synonyms examples
     const synonymExamples = synonymsByField
       ? Object.entries(synonymsByField)
@@ -63,7 +79,7 @@ Available columns in this file:
 ${columns.join(', ')}
 
 Sample data (first 5 rows):
-${JSON.stringify(sampleData, null, 2)}
+${JSON.stringify(restructuredSampleData, null, 2)}
 
 Common synonyms for each field type:
 ${synonymExamples}
@@ -76,7 +92,14 @@ Your task: Identify which columns correspond to each field type. Consider:
 2. Partial matches (e.g., "Total Amount" contains "amount")
 3. The actual data values in the sample rows
 4. Context clues from other columns
-5. If date or revenue columns are not clearly present, it's acceptable to leave them null`;
+5. If date or revenue columns are not clearly present, it's acceptable to leave them null
+
+CRITICAL RULES FOR COLUMN SELECTION:
+- When multiple columns have similar names (e.g., "Customer_Name" vs "Customer_Name host code"), ALWAYS prefer the simpler, shorter column name
+- Prefer base column names without suffixes like "host code", "id", "number", "code"
+- For account/customer: Choose "Customer_Name" NOT "Customer_Name host code"
+- For product: Choose "Product_Name" NOT "Product_Name host code"
+- Code/ID columns typically contain reference numbers, while name columns contain descriptive text`;
 
     if (aiTrainingConfig?.parsing_instructions) {
       prompt += `\n\nIMPORTANT - DISTRIBUTOR-SPECIFIC AI TRAINING INSTRUCTIONS:

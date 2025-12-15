@@ -326,7 +326,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
         };
       } else {
         detectionResult = await detectColumnMappingEnhanced(
-          rows.slice(0, 10),
+          rows,
           organizationId,
           distributorId,
           filename,
@@ -346,6 +346,8 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
         console.warn('⚠️ Low confidence mapping detected');
       }
 
+      console.log({ detectionResult })
+
       await supabase
         .from('uploads')
         .update({
@@ -360,11 +362,33 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
         })
         .eq('id', upload.id);
 
-      console.log(`📝 Transforming ${rows.length} rows...`);
-      const transformResults = rows.map((row, index) => ({
+      // Restructure rows to use detected column names as keys
+      // Original rows have generic keys (__EMPTY, __EMPTY_1), we need to map them to actual column names
+      const detectedColumns = detectionResult?.columns || Object.keys(rows[0] || {});
+      console.log('📋 Detected column names:', detectedColumns);
+      
+      const restructuredRows = rows.map(row => {
+        const restructured: Record<string, any> = {};
+        const originalKeys = Object.keys(row);
+        
+        detectedColumns.forEach((colName, index) => {
+          if (index < originalKeys.length) {
+            const originalKey = originalKeys[index];
+            restructured[colName] = row[originalKey];
+          }
+        });
+        
+        return restructured;
+      });
+
+      console.log(`📝 Transforming ${restructuredRows.length} rows...`);
+      const transformResults = restructuredRows.map((row, index) => ({
         record: transformRow(row, columnMapping, organizationId, upload.id, distributorName, organizationName, distributorState, defaultPeriod, unitType),
         rowIndex: index
       }));
+
+      console.log({ transformResults })
+      
 
       salesRecords = transformResults
         .filter(r => r.record !== null)

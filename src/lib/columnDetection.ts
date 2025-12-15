@@ -128,7 +128,7 @@ export async function detectColumnMappingEnhanced(
       console.log('📖 Using AI training instructions from configuration');
     }
     try {
-      aiResult = sanitizeDetectionResult(await detectWithOpenAI(aiClient, dataRows, synonyms, aiTrainingConfig));
+      aiResult = sanitizeDetectionResult(await detectWithOpenAI(aiClient, columns, dataRows, synonyms, aiTrainingConfig));
       if (aiResult.confidence > bestResult.confidence) {
         bestResult = aiResult;
         console.log('✅ OpenAI detection succeeded with confidence:', aiResult.confidence);
@@ -618,12 +618,12 @@ function detectWithAITrainingMappings(
  */
 async function detectWithOpenAI(
   aiClient: any,
+  columns: string[],
   sampleRows: any[],
   synonyms: FieldSynonym[],
   aiTrainingConfig?: { field_mappings?: Record<string, any>; parsing_instructions?: string; orientation?: string }
 ): Promise<DetectionResult> {
   try {
-    const columns = Object.keys(sampleRows[0] || {});
     const sampleData = sampleRows.slice(0, 5);
 
     const synonymsByField = synonyms.reduce((acc, s) => {

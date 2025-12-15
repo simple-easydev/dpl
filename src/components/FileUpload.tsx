@@ -152,19 +152,9 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
         }
       } else {
         const parseResult = await parseFile(file);
-        const { rows, headers, parsingWarnings } = parseResult;
+        const { rows, parsingWarnings } = parseResult;
 
-        console.log('📄 File parsed successfully:');
-        console.log('  - Rows:', rows.length);
-        console.log('  - Headers:', headers);
-        console.log('  - Headers length:', headers.length);
-
-        if (!headers || headers.length === 0) {
-          throw new Error(
-            'No column headers found in file.\n\n' +
-            'Please ensure your CSV file has a header row with column names.'
-          );
-        }
+        
 
         if (rows.length === 0) {
           throw new Error('File contains no data');
@@ -199,12 +189,27 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
           aiTrainingConfig
         );
 
+
+        console.log({ detectionResult })
+
         // Use the intelligently detected columns from the header detection module
         // instead of the parser's headers (which might be from wrong row or __EMPTY_ placeholders)
-        const detectedColumns = detectionResult.columns || headers;
+        const detectedColumns = detectionResult.columns || [];
+
+        console.log('📄 File parsed successfully:');
+        console.log('  - Rows:', rows.length);
+        console.log('  - Headers:', detectedColumns);
+        console.log('  - Headers length:', detectedColumns.length);
+
+        if (!detectedColumns || detectedColumns.length === 0) {
+          throw new Error(
+            'No column headers found in file.\n\n' +
+            'Please ensure your CSV file has a header row with column names.'
+          );
+        }
         
         console.log('🗒️ Detected columns from intelligent header detection:', detectedColumns);
-        console.log('📊 Original parser headers:', headers);
+        console.log('📊 Original parser headers:', detectedColumns);
 
         const previewDataToSet = {
           file,
@@ -220,7 +225,7 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
         console.log('👁️ Preview data prepared:', {
           headersCount: previewDataToSet.headers.length,
           rowsCount: previewDataToSet.rows.length,
-          headers: previewDataToSet.headers,
+          headers: detectedColumns,
         });
 
         setPreviewData(previewDataToSet);
