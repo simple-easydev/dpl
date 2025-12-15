@@ -151,10 +151,10 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
           }, 1500);
         }
       } else {
+
+
         const parseResult = await parseFile(file);
         const { rows, parsingWarnings } = parseResult;
-
-        
 
         if (rows.length === 0) {
           throw new Error('File contains no data');
@@ -192,44 +192,44 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
 
         console.log({ detectionResult })
 
-        // Use the intelligently detected columns from the header detection module
-        // instead of the parser's headers (which might be from wrong row or __EMPTY_ placeholders)
-        const detectedColumns = detectionResult.columns || [];
+        // // Use the intelligently detected columns from the header detection module
+        // // instead of the parser's headers (which might be from wrong row or __EMPTY_ placeholders)
+        // const detectedColumns = detectionResult.columns || [];
 
-        console.log('📄 File parsed successfully:');
-        console.log('  - Rows:', rows.length);
-        console.log('  - Headers:', detectedColumns);
-        console.log('  - Headers length:', detectedColumns.length);
+        // console.log('📄 File parsed successfully:');
+        // console.log('  - Rows:', rows.length);
+        // console.log('  - Headers:', detectedColumns);
+        // console.log('  - Headers length:', detectedColumns.length);
 
-        if (!detectedColumns || detectedColumns.length === 0) {
-          throw new Error(
-            'No column headers found in file.\n\n' +
-            'Please ensure your CSV file has a header row with column names.'
-          );
-        }
+        // if (!detectedColumns || detectedColumns.length === 0) {
+        //   throw new Error(
+        //     'No column headers found in file.\n\n' +
+        //     'Please ensure your CSV file has a header row with column names.'
+        //   );
+        // }
         
-        console.log('🗒️ Detected columns from intelligent header detection:', detectedColumns);
-        console.log('📊 Original parser headers:', detectedColumns);
+        // console.log('🗒️ Detected columns from intelligent header detection:', detectedColumns);
+        // console.log('📊 Original parser headers:', detectedColumns);
 
-        const previewDataToSet = {
-          file,
-          rows,
-          headers: detectedColumns, // Use detected columns, not parser headers
-          mapping: detectionResult.mapping,
-          confidence: detectionResult.confidence,
-          method: detectionResult.method,
-          aiConfigName: aiConfig?.configuration_name,
-          parsingWarnings,
-        };
+        // const previewDataToSet = {
+        //   file,
+        //   rows,
+        //   headers: detectedColumns, // Use detected columns, not parser headers
+        //   mapping: detectionResult.mapping,
+        //   confidence: detectionResult.confidence,
+        //   method: detectionResult.method,
+        //   aiConfigName: aiConfig?.configuration_name,
+        //   parsingWarnings,
+        // };
 
-        console.log('👁️ Preview data prepared:', {
-          headersCount: previewDataToSet.headers.length,
-          rowsCount: previewDataToSet.rows.length,
-          headers: detectedColumns,
-        });
+        // console.log('👁️ Preview data prepared:', {
+        //   headersCount: previewDataToSet.headers.length,
+        //   rowsCount: previewDataToSet.rows.length,
+        //   headers: detectedColumns,
+        // });
 
-        setPreviewData(previewDataToSet);
-        setShowPreview(true);
+        // setPreviewData(previewDataToSet);
+        // setShowPreview(true);
         setUploading(false);
       }
     } catch (err) {

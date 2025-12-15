@@ -89,36 +89,36 @@ export async function detectColumnMappingEnhanced(
   };
 
   let aiResult: DetectionResult | null = null;
-  let learnedResult: DetectionResult | null = null;
-  let synonymResult: DetectionResult | null = null;
-  let patternResult: DetectionResult | null = null;
-  let aiTrainingResult: DetectionResult | null = null;
+  const learnedResult: DetectionResult | null = null;
+  const synonymResult: DetectionResult | null = null;
+  const patternResult: DetectionResult | null = null;
+  const aiTrainingResult: DetectionResult | null = null;
 
-  if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
-    console.log('🎓 Found AI training field mappings, attempting direct mapping...');
-    try {
-      aiTrainingResult = sanitizeDetectionResult(detectWithAITrainingMappings(columns, dataRows, aiTrainingConfig.field_mappings));
-      if (aiTrainingResult.confidence > bestResult.confidence) {
-        bestResult = aiTrainingResult;
-        console.log('✅ AI training mapping applied with confidence:', aiTrainingResult.confidence);
-      }
-    } catch (error) {
-      console.warn('⚠️ AI training mapping failed:', error);
-    }
-  }
+  // if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
+  //   console.log('🎓 Found AI training field mappings, attempting direct mapping...');
+  //   try {
+  //     aiTrainingResult = sanitizeDetectionResult(detectWithAITrainingMappings(columns, dataRows, aiTrainingConfig.field_mappings));
+  //     if (aiTrainingResult.confidence > bestResult.confidence) {
+  //       bestResult = aiTrainingResult;
+  //       console.log('✅ AI training mapping applied with confidence:', aiTrainingResult.confidence);
+  //     }
+  //   } catch (error) {
+  //     console.warn('⚠️ AI training mapping failed:', error);
+  //   }
+  // }
 
-  if (learnedMappings.length > 0) {
-    console.log('📚 Found learned mappings, attempting to apply...');
-    try {
-      learnedResult = sanitizeDetectionResult(applyLearnedMapping(columns, learnedMappings));
-      if (learnedResult.confidence > bestResult.confidence) {
-        bestResult = learnedResult;
-        console.log('✅ Learned mapping applied with confidence:', learnedResult.confidence);
-      }
-    } catch (error) {
-      console.warn('⚠️ Learned mapping failed:', error);
-    }
-  }
+  // if (learnedMappings.length > 0) {
+  //   console.log('📚 Found learned mappings, attempting to apply...');
+  //   try {
+  //     learnedResult = sanitizeDetectionResult(applyLearnedMapping(columns, learnedMappings));
+  //     if (learnedResult.confidence > bestResult.confidence) {
+  //       bestResult = learnedResult;
+  //       console.log('✅ Learned mapping applied with confidence:', learnedResult.confidence);
+  //     }
+  //   } catch (error) {
+  //     console.warn('⚠️ Learned mapping failed:', error);
+  //   }
+  // }
 
   // const aiClient = await getOrganizationOpenAI(organizationId);
   const aiClient = openai;
@@ -138,27 +138,27 @@ export async function detectColumnMappingEnhanced(
     }
   }
 
-  console.log('🔤 Attempting synonym-based detection...');
-  try {
-    synonymResult = sanitizeDetectionResult(detectWithSynonyms(columns, dataRows, synonyms));
-    if (synonymResult.confidence > bestResult.confidence) {
-      bestResult = synonymResult;
-      console.log('✅ Synonym detection succeeded with confidence:', synonymResult.confidence);
-    }
-  } catch (error) {
-    console.warn('⚠️ Synonym detection failed:', error);
-  }
+  // console.log('🔤 Attempting synonym-based detection...');
+  // try {
+  //   synonymResult = sanitizeDetectionResult(detectWithSynonyms(columns, dataRows, synonyms));
+  //   if (synonymResult.confidence > bestResult.confidence) {
+  //     bestResult = synonymResult;
+  //     console.log('✅ Synonym detection succeeded with confidence:', synonymResult.confidence);
+  //   }
+  // } catch (error) {
+  //   console.warn('⚠️ Synonym detection failed:', error);
+  // }
 
-  console.log('📊 Attempting pattern-based detection...');
-  try {
-    patternResult = sanitizeDetectionResult(detectWithPatterns(columns, dataRows));
-    if (patternResult.confidence > bestResult.confidence) {
-      bestResult = patternResult;
-      console.log('✅ Pattern detection succeeded with confidence:', patternResult.confidence);
-    }
-  } catch (error) {
-    console.warn('⚠️ Pattern detection failed:', error);
-  }
+  // console.log('📊 Attempting pattern-based detection...');
+  // try {
+  //   patternResult = sanitizeDetectionResult(detectWithPatterns(columns, dataRows));
+  //   if (patternResult.confidence > bestResult.confidence) {
+  //     bestResult = patternResult;
+  //     console.log('✅ Pattern detection succeeded with confidence:', patternResult.confidence);
+  //   }
+  // } catch (error) {
+  //   console.warn('⚠️ Pattern detection failed:', error);
+  // }
 
   try {
     const validResults = [aiTrainingResult, aiResult, learnedResult, synonymResult, patternResult].filter(r => r !== null) as DetectionResult[];

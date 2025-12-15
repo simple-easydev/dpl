@@ -371,11 +371,11 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
       
       const restructuredRows = rows.map(row => {
         const restructured: Record<string, any> = {};
-        const originalKeys = Object.keys(row);
+        const rowValues = Object.values(row);
+        
         detectedColumns.forEach((colName: string, index: number) => {
-          if (index < originalKeys.length) {
-            const originalKey = originalKeys[index];
-            restructured[colName] = row[originalKey];
+          if (index < rowValues.length) {
+            restructured[colName] = rowValues[index];
           }
         });
         
