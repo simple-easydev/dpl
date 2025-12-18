@@ -165,6 +165,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     let extractionResult: any = null;
     let detectionResult: any = null;
     const parsingWarnings: any = inputParsingWarnings || null;
+    let detectedColumns:string[] = [];
 
     if (pdfFile) {
       console.log(`📄 Processing PDF file: ${filename}...`);
@@ -381,7 +382,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
 
       // Restructure rows to use detected column names as keys
       // Original rows have generic keys (__EMPTY, __EMPTY_1), we need to map them to actual column names
-      const detectedColumns = detectionResult?.columns || Object.keys(rows[0] || {});
+      detectedColumns = detectionResult?.columns || Object.keys(rows[0] || {});
       console.log('📋 Detected column names:', detectedColumns);
       
       const restructuredRows = rows.map((row) => {
@@ -486,7 +487,6 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
         }
       } else {
         const aiConfigName = aiConfigs && aiConfigs.length > 0 ? aiConfigs[0].configuration_name : null;
-        const detectedColumns = rows && rows.length > 0 ? Object.keys(rows[0]) : [];
         const columnList = detectedColumns.length > 0 ? detectedColumns.join(', ') : 'none';
 
         const mappingDetails = [];
@@ -769,7 +769,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
         upload.id,
         distributorId,
         filename,
-        Object.keys(rows[0] || {}),
+        detectedColumns,
         columnMapping,
         detectionResult.confidence,
         detectionResult.method,
