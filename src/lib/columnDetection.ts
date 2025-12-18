@@ -81,7 +81,7 @@ export async function detectColumnMappingEnhanced(
   });
 
   const synonyms = await loadSynonyms(organizationId);
-  // const learnedMappings = await loadLearnedMappings(organizationId, distributorId);
+  const learnedMappings = await loadLearnedMappings(organizationId, distributorId);
 
   let bestResult: DetectionResult = {
     mapping: {},
@@ -91,36 +91,36 @@ export async function detectColumnMappingEnhanced(
   };
 
   let aiResult: DetectionResult | null = null;
-  const learnedResult: DetectionResult | null = null;
-  const synonymResult: DetectionResult | null = null;
-  const patternResult: DetectionResult | null = null;
-  const aiTrainingResult: DetectionResult | null = null;
+  let learnedResult: DetectionResult | null = null;
+  let synonymResult: DetectionResult | null = null;
+  let patternResult: DetectionResult | null = null;
+  let aiTrainingResult: DetectionResult | null = null;
 
-  // if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
-  //   console.log('🎓 Found AI training field mappings, attempting direct mapping...');
-  //   try {
-  //     aiTrainingResult = sanitizeDetectionResult(detectWithAITrainingMappings(columns, dataRows, aiTrainingConfig.field_mappings));
-  //     if (aiTrainingResult.confidence > bestResult.confidence) {
-  //       bestResult = aiTrainingResult;
-  //       console.log('✅ AI training mapping applied with confidence:', aiTrainingResult.confidence);
-  //     }
-  //   } catch (error) {
-  //     console.warn('⚠️ AI training mapping failed:', error);
-  //   }
-  // }
+  if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
+    console.log('🎓 Found AI training field mappings, attempting direct mapping...');
+    try {
+      aiTrainingResult = sanitizeDetectionResult(detectWithAITrainingMappings(columns, dataRows, aiTrainingConfig.field_mappings));
+      if (aiTrainingResult.confidence > bestResult.confidence) {
+        bestResult = aiTrainingResult;
+        console.log('✅ AI training mapping applied with confidence:', aiTrainingResult.confidence);
+      }
+    } catch (error) {
+      console.warn('⚠️ AI training mapping failed:', error);
+    }
+  }
 
-  // if (learnedMappings.length > 0) {
-  //   console.log('📚 Found learned mappings, attempting to apply...');
-  //   try {
-  //     learnedResult = sanitizeDetectionResult(applyLearnedMapping(columns, learnedMappings));
-  //     if (learnedResult.confidence > bestResult.confidence) {
-  //       bestResult = learnedResult;
-  //       console.log('✅ Learned mapping applied with confidence:', learnedResult.confidence);
-  //     }
-  //   } catch (error) {
-  //     console.warn('⚠️ Learned mapping failed:', error);
-  //   }
-  // }
+  if (learnedMappings.length > 0) {
+    console.log('📚 Found learned mappings, attempting to apply...');
+    try {
+      learnedResult = sanitizeDetectionResult(applyLearnedMapping(columns, learnedMappings));
+      if (learnedResult.confidence > bestResult.confidence) {
+        bestResult = learnedResult;
+        console.log('✅ Learned mapping applied with confidence:', learnedResult.confidence);
+      }
+    } catch (error) {
+      console.warn('⚠️ Learned mapping failed:', error);
+    }
+  }
 
   // const aiClient = await getOrganizationOpenAI(organizationId);
   const aiClient = openai;
@@ -140,27 +140,27 @@ export async function detectColumnMappingEnhanced(
     }
   }
 
-  // console.log('🔤 Attempting synonym-based detection...');
-  // try {
-  //   synonymResult = sanitizeDetectionResult(detectWithSynonyms(columns, dataRows, synonyms));
-  //   if (synonymResult.confidence > bestResult.confidence) {
-  //     bestResult = synonymResult;
-  //     console.log('✅ Synonym detection succeeded with confidence:', synonymResult.confidence);
-  //   }
-  // } catch (error) {
-  //   console.warn('⚠️ Synonym detection failed:', error);
-  // }
+  console.log('🔤 Attempting synonym-based detection...');
+  try {
+    synonymResult = sanitizeDetectionResult(detectWithSynonyms(columns, dataRows, synonyms));
+    if (synonymResult.confidence > bestResult.confidence) {
+      bestResult = synonymResult;
+      console.log('✅ Synonym detection succeeded with confidence:', synonymResult.confidence);
+    }
+  } catch (error) {
+    console.warn('⚠️ Synonym detection failed:', error);
+  }
 
-  // console.log('📊 Attempting pattern-based detection...');
-  // try {
-  //   patternResult = sanitizeDetectionResult(detectWithPatterns(columns, dataRows));
-  //   if (patternResult.confidence > bestResult.confidence) {
-  //     bestResult = patternResult;
-  //     console.log('✅ Pattern detection succeeded with confidence:', patternResult.confidence);
-  //   }
-  // } catch (error) {
-  //   console.warn('⚠️ Pattern detection failed:', error);
-  // }
+  console.log('📊 Attempting pattern-based detection...');
+  try {
+    patternResult = sanitizeDetectionResult(detectWithPatterns(columns, dataRows));
+    if (patternResult.confidence > bestResult.confidence) {
+      bestResult = patternResult;
+      console.log('✅ Pattern detection succeeded with confidence:', patternResult.confidence);
+    }
+  } catch (error) {
+    console.warn('⚠️ Pattern detection failed:', error);
+  }
 
   try {
     const validResults = [aiTrainingResult, aiResult, learnedResult, synonymResult, patternResult].filter(r => r !== null) as DetectionResult[];
@@ -240,52 +240,50 @@ async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: s
     console.warn('⚠️ AI header detection failed, falling back to rule-based detection:', error);
   }
 
-  return { index: 0, columns: [], confidence: 0, columnIndices:[] };
-
   // Fallback to rule-based detection
-  // console.log('🔧 Using rule-based header detection...');
-  // let bestRowIndex = 0;
-  // let bestScore = 0;
+  console.log('🔧 Using rule-based header detection...');
+  let bestRowIndex = 0;
+  let bestScore = 0;
 
-  // for (let i = 0; i < Math.min(rows.length, 15); i++) {
-  //   const row = rows[i];
-  //   const values = Object.values(row);
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const row = rows[i];
+    const values = Object.values(row);
     
-  //   const score = calculateHeaderScore(values, rows, i);
+    const score = calculateHeaderScore(values, rows, i);
 
-  //   console.log(`  Row ${i}: score=${score}, values:`, values.slice(0, 5));
+    console.log(`  Row ${i}: score=${score}, values:`, values.slice(0, 5));
 
-  //   if (score > bestScore) {
-  //     bestScore = score;
-  //     bestRowIndex = i;
-  //   }
-  // }
+    if (score > bestScore) {
+      bestScore = score;
+      bestRowIndex = i;
+    }
+  }
 
-  // const selectedRow = rows[bestRowIndex];
+  const selectedRow = rows[bestRowIndex];
   
-  // // Extract actual column names from the header row's VALUES, not keys
-  // // The keys might be generic (__EMPTY_, A, B, C) but values contain real names
-  // const allKeys = Object.keys(selectedRow);
-  // const columns: string[] = [];
+  // Extract actual column names from the header row's VALUES, not keys
+  // The keys might be generic (__EMPTY_, A, B, C) but values contain real names
+  const allKeys = Object.keys(selectedRow);
+  const columns: string[] = [];
   
-  // allKeys.forEach(key => {
-  //   const headerValue = selectedRow[key];
-  //   if (headerValue != null && String(headerValue).trim() !== '') {
-  //     // Use the actual header value as the column name
-  //     columns.push(String(headerValue).trim());
-  //   }
-  // });
+  allKeys.forEach(key => {
+    const headerValue = selectedRow[key];
+    if (headerValue != null && String(headerValue).trim() !== '') {
+      // Use the actual header value as the column name
+      columns.push(String(headerValue).trim());
+    }
+  });
 
-  // console.log(`🎯 Selected row ${bestRowIndex} as header (score: ${bestScore})`);
-  // console.log(`📋 Extracted ${columns.length} column names:`, columns.slice(0, 10));
+  console.log(`🎯 Selected row ${bestRowIndex} as header (score: ${bestScore})`);
+  console.log(`📋 Extracted ${columns.length} column names:`, columns.slice(0, 10));
 
-  // // If no columns found, fallback to using keys
-  // if (columns.length === 0) {
-  //   console.warn('⚠️ No non-empty column names found in detected header row, using object keys');
-  //   return { index: bestRowIndex, columns: allKeys, confidence: 50 };
-  // }
+  // If no columns found, fallback to using keys
+  if (columns.length === 0) {
+    console.warn('⚠️ No non-empty column names found in detected header row, using object keys');
+    return { index: bestRowIndex, columns: allKeys, confidence: 50, columnIndices:[] };
+  }
 
-  // return { index: bestRowIndex, columns, confidence: 60 };
+  return { index: bestRowIndex, columns, confidence: 60, columnIndices:[] };
 }
 
 /**
