@@ -78,54 +78,6 @@ async function parseText(file: File): Promise<ParsedFileData> {
   };
 }
 
-async function detectCSVHeaders(text: string): Promise<{ found: boolean; preview: string }> {
-  const cleanedText = text.replace(/^\uFEFF/, '').trim();
-
-  if (cleanedText.length === 0) {
-    return { found: false, preview: '(File is empty)' };
-  }
-
-  const lines = cleanedText.split(/\r?\n/);
-  const nonEmptyLines = lines.filter(line => line.trim().length > 0);
-
-  if (nonEmptyLines.length === 0) {
-    return { found: false, preview: '(File contains only blank lines)' };
-  }
-
-  const firstLine = nonEmptyLines[0].trim();
-  const preview = nonEmptyLines.slice(0, 3).join('\n');
-
-  const delimiters = [',', ';', '\t', '|'];
-  let foundDelimiter = false;
-
-  for (const delimiter of delimiters) {
-    if (firstLine.includes(delimiter)) {
-      foundDelimiter = true;
-      const parts = firstLine.split(delimiter);
-      const nonEmptyParts = parts.filter(p => p.trim().length > 0);
-
-      // Valid CSV headers need at least 2 non-empty columns
-      // Allow trailing empty columns (common in CSV files with trailing commas)
-      if (parts.length > 1 && nonEmptyParts.length >= 2) {
-        console.log(`✓ CSV headers detected using delimiter '${delimiter === '\t' ? '\\t' : delimiter}': ${nonEmptyParts.join(', ')}`);
-        return { found: true, preview };
-      }
-    }
-  }
-
-  if (!foundDelimiter) {
-    return {
-      found: false,
-      preview: `First line: "${firstLine}"\n\nNo standard CSV delimiter (comma, semicolon, tab, or pipe) detected.`
-    };
-  }
-
-  return {
-    found: false,
-    preview: `First line: "${firstLine}"\n\nDelimiters found but could not parse valid headers.`
-  };
-}
-
 async function parseCSV(file: File): Promise<ParsedFileData> {
   const text = await readTextFile(file);
 
