@@ -128,24 +128,10 @@ async function detectCSVHeaders(text: string): Promise<{ found: boolean; preview
 
 async function parseCSV(file: File): Promise<ParsedFileData> {
   const text = await readTextFile(file);
-  const detectedHeaders = await detectCSVHeaders(text);
-
-  if (!detectedHeaders.found) {
-    throw new Error(
-      'No column headers detected in CSV file.\n\n' +
-      'Please ensure your CSV file has a header row with column names.\n\n' +
-      'Common issues:\n' +
-      '- File may be empty or contain only blank lines\n' +
-      '- First row might not contain column headers\n' +
-      '- File encoding may be incorrect (try saving as UTF-8)\n' +
-      '- Delimiter might be non-standard (ensure commas, tabs, or semicolons are used)\n\n' +
-      `Preview of first lines:\n${detectedHeaders.preview}`
-    );
-  }
 
   return new Promise((resolve, reject) => {
     const parsingErrors: Array<{ row: number; message: string; data?: any }> = [];
-    let totalRows = 0;
+    const totalRows = 0;
 
     Papa.parse(text, {
       header: true,
@@ -168,7 +154,10 @@ async function parseCSV(file: File): Promise<ParsedFileData> {
         if (headers.length === 0) {
           reject(new Error(
             'No column headers detected in CSV file.\n\n' +
-            'Please ensure your CSV file has a header row with column names.'
+            'Please ensure your CSV file has:\n' +
+            '- A header row with column names in the first row\n' +
+            '- Standard delimiters (comma, semicolon, tab, or pipe)\n' +
+            '- Proper UTF-8 encoding if using special characters'
           ));
           return;
         }

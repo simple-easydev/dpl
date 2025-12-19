@@ -190,9 +190,6 @@ export default function FileUpload({ onUploadComplete }: FileUploadProps) {
           aiTrainingConfig
         );
 
-
-        console.log({ detectionResult })
-
         // Use the intelligently detected columns from the header detection module
         // instead of the parser's headers (which might be from wrong row or __EMPTY_ placeholders)
         const detectedColumns = detectionResult.columns || [];
