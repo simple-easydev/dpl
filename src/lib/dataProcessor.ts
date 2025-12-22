@@ -13,7 +13,7 @@ import {
   logMergeDecision,
   normalizeProductName
 } from './productDeduplicationService';
-import { PackageType, BOTTLES_PER_PACKAGE } from './fobPricingService';
+import { PackageType } from './fobPricingService';
 import { classifyUnclassifiedAccounts } from './premiseClassificationService';
 import { processDepletionForInventory } from './inventoryService';
 
@@ -399,14 +399,20 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
       });
 
       console.log(`📝 Transforming ${restructuredRows.length} rows...`);
-      console.log({ restructuredRows });
+      // Only log sample data for small files to avoid performance issues
+      if (restructuredRows.length <= 100) {
+        console.log('Sample restructured rows:', restructuredRows.slice(0, 3));
+      }
       
       const transformResults = restructuredRows.map((row, index) => ({
         record: transformRow(row, columnMapping, organizationId, upload.id, distributorName, organizationName, distributorState, defaultPeriod, unitType),
         rowIndex: index
       }));
 
-      console.log({ transformResults })
+      // Only log sample transform results for small files
+      if (transformResults.length <= 100) {
+        console.log('Sample transform results:', transformResults.slice(0, 3));
+      }
       
 
       salesRecords = transformResults
@@ -419,7 +425,7 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
         console.warn(`⚠️ ${failedRows.length} rows filtered out`);
 
         // Count records without revenue (informational only - not a filter reason)
-        const missingRevenueCount = rows.filter((row, idx) => {
+        const missingRevenueCount = rows.filter((row) => {
           const revenueCol = columnMapping.revenue || columnMapping.amount;
           const revenue = revenueCol ? parseNumber(row[revenueCol]) : null;
           return revenue === null || revenue === undefined;
@@ -533,58 +539,93 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
 
     const unmappedProducts = uniqueProductNames.filter(p => !existingMappings.has(p));
 
-    let duplicateAnalysis: any[] = [];
+    const duplicateAnalysis: any[] = [];
     const productsNeedingReview: string[] = [];
     const autoMergedProducts: Map<string, string> = new Map();
 
     if (unmappedProducts.length > 0) {
       console.log(`   - Analyzing ${unmappedProducts.length} new products for duplicates...`);
-      duplicateAnalysis = await analyzeProductDuplicates(
-        unmappedProducts,
-        organizationId,
-        autoMergeThreshold
-      );
+      
+      // Process duplicate detection in parallel batches of 10 for better performance
+      const duplicateBatchSize = 10;
+      const duplicateBatches: string[][] = [];
+      for (let i = 0; i < unmappedProducts.length; i += duplicateBatchSize) {
+        duplicateBatches.push(unmappedProducts.slice(i, i + duplicateBatchSize));
+      }
 
+      // Analyze all batches in parallel
+      for (const batch of duplicateBatches) {
+        const batchAnalysis = await Promise.all(
+          batch.map(product => 
+            analyzeProductDuplicates([product], organizationId, autoMergeThreshold)
+              .then(results => results && results.length > 0 ? results[0] : null)
+              .catch(error => {
+                console.error(`Error analyzing product "${product}":`, error);
+                return null;
+              })
+          )
+        );
+        // Filter out null/undefined results from failed analyses
+        duplicateAnalysis.push(...batchAnalysis.filter(result => result !== null));
+      }
+
+      // Process merge decisions and review queue additions in parallel
+      const mergePromises: Promise<any>[] = [];
+      
       for (const analysis of duplicateAnalysis) {
-        if (analysis.shouldAutoMerge && analysis.matches.length > 0) {
+        if (!analysis) continue; // Skip if analysis is null/undefined
+        
+        if (analysis.shouldAutoMerge && analysis.matches && analysis.matches.length > 0) {
           const canonicalName = analysis.matches[0].existingProductName;
           autoMergedProducts.set(analysis.productName, canonicalName);
 
-          await createProductMapping(
-            organizationId,
-            analysis.productName,
-            canonicalName,
-            analysis.matches[0].confidence,
-            'ai_auto',
-            userId
-          );
-
-          await logMergeDecision(
-            organizationId,
-            'auto',
-            [analysis.productName],
-            canonicalName,
-            analysis.matches[0].confidence,
-            analysis.matches[0].reasoning,
-            salesRecords.filter(r => (pdfFile ? r.product : r.product_name) === analysis.productName).length,
-            upload.id,
-            userId
+          // Queue parallel operations
+          mergePromises.push(
+            Promise.all([
+              createProductMapping(
+                organizationId,
+                analysis.productName,
+                canonicalName,
+                analysis.matches[0].confidence,
+                'ai_auto',
+                userId
+              ),
+              logMergeDecision(
+                organizationId,
+                'auto',
+                [analysis.productName],
+                canonicalName,
+                analysis.matches[0].confidence,
+                analysis.matches[0].reasoning,
+                salesRecords.filter(r => (pdfFile ? r.product : r.product_name) === analysis.productName).length,
+                upload.id,
+                userId
+              )
+            ])
           );
 
           console.log(`   ✓ Auto-merged: "${analysis.productName}" → "${canonicalName}" (${(analysis.matches[0].confidence * 100).toFixed(0)}%)`);
         } else if (analysis.matches.length > 0) {
           productsNeedingReview.push(analysis.productName);
 
-          await addToReviewQueue(
-            organizationId,
-            upload.id,
-            analysis.productName,
-            analysis.matches,
-            analysis
+          // Queue parallel operation
+          mergePromises.push(
+            addToReviewQueue(
+              organizationId,
+              upload.id,
+              analysis.productName,
+              analysis.matches,
+              analysis
+            )
           );
 
           console.log(`   ⚠ Needs review: "${analysis.productName}" - ${analysis.matches.length} potential matches`);
         }
+      }
+
+      // Wait for all merge operations to complete in parallel
+      if (mergePromises.length > 0) {
+        await Promise.all(mergePromises);
       }
     }
 
@@ -659,15 +700,30 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     // Check for existing order_ids in database to prevent conflicts
     if (deduplicatedWithOrderId.length > 0) {
       const orderIdsToCheck = deduplicatedWithOrderId.map(r => r.order_id);
-      const { data: existingOrderIds } = await supabase
-        .from('sales_data')
-        .select('order_id')
-        .eq('organization_id', organizationId)
-        .in('order_id', orderIdsToCheck);
+      
+      // Process in batches of 1000 to avoid query limits and timeouts
+      const checkBatchSize = 1000;
+      const existingOrderIdSet = new Set<string>();
+      
+      for (let i = 0; i < orderIdsToCheck.length; i += checkBatchSize) {
+        const batchIds = orderIdsToCheck.slice(i, i + checkBatchSize);
+        const { data: batchExistingOrderIds } = await supabase
+          .from('sales_data')
+          .select('order_id')
+          .eq('organization_id', organizationId)
+          .in('order_id', batchIds);
 
-      if (existingOrderIds && existingOrderIds.length > 0) {
-        const existingSet = new Set(existingOrderIds.map(r => r.order_id));
-        const finalRecords = deduplicatedRecords.filter(r => !r.order_id || !existingSet.has(r.order_id));
+        if (batchExistingOrderIds) {
+          batchExistingOrderIds.forEach(r => {
+            if (r.order_id) {
+              existingOrderIdSet.add(r.order_id);
+            }
+          });
+        }
+      }
+
+      if (existingOrderIdSet.size > 0) {
+        const finalRecords = deduplicatedRecords.filter(r => !r.order_id || !existingOrderIdSet.has(r.order_id));
         const skippedCount = deduplicatedRecords.length - finalRecords.length;
         
         if (skippedCount > 0) {
@@ -682,11 +738,15 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
       salesRecords = deduplicatedRecords;
     }
 
-    const batchSize = 500;
+    const batchSize = 1000; // Increased from 500 for better performance
     const insertedRecords: any[] = [];
 
     for (let i = 0; i < salesRecords.length; i += batchSize) {
-      const batch = salesRecords.slice(i, i + batchSize).map(({ _original, ...record }) => record);
+      const batch = salesRecords.slice(i, i + batchSize).map(({ _original, ...record }) => {
+        // Remove _original field before inserting
+        void _original; // Suppress unused variable warning
+        return record;
+      });
       const { data: insertedData, error: insertError } = await supabase
         .from('sales_data')
         .insert(batch)
@@ -704,20 +764,26 @@ export async function processAndStoreSalesData(options: ProcessOptions) {
     console.log('📦 Processing inventory depletions...');
     let inventoryUpdateCount = 0;
 
-    for (const record of insertedRecords) {
-      if (record.product_name && record.distributor && record.quantity_in_bottles) {
-        const success = await processDepletionForInventory(
+    // Process inventory updates in parallel batches for better performance
+    const inventoryBatchSize = 50;
+    const validRecords = insertedRecords.filter(r => 
+      r.product_name && r.distributor && r.quantity_in_bottles
+    );
+
+    for (let i = 0; i < validRecords.length; i += inventoryBatchSize) {
+      const batch = validRecords.slice(i, i + inventoryBatchSize);
+      const updatePromises = batch.map(record => 
+        processDepletionForInventory(
           organizationId,
           record.id,
           record.product_name,
           record.distributor,
           Number(record.quantity_in_bottles)
-        );
+        )
+      );
 
-        if (success) {
-          inventoryUpdateCount++;
-        }
-      }
+      const results = await Promise.all(updatePromises);
+      inventoryUpdateCount += results.filter(success => success).length;
     }
 
     if (inventoryUpdateCount > 0) {
@@ -1056,35 +1122,49 @@ export async function updateAggregatedData(organizationId: string) {
     productMap.set(productKey, productData);
   }
 
-  for (const [accountName, data] of accountMap.entries()) {
+  // Bulk upsert accounts for much better performance
+  const accountUpserts: AccountInsert[] = Array.from(accountMap.entries()).map(([accountName, data]) => ({
+    organization_id: organizationId,
+    account_name: accountName,
+    total_revenue: data.totalRevenue,
+    total_orders: data.totalOrders,
+    first_order_date: data.firstOrderDate,
+    last_order_date: data.lastOrderDate,
+    average_order_value: data.totalRevenue / data.totalOrders,
+  }));
+
+  // Process in batches of 500
+  const accountBatchSize = 500;
+  for (let i = 0; i < accountUpserts.length; i += accountBatchSize) {
+    const batch = accountUpserts.slice(i, i + accountBatchSize);
     const { error } = await supabase
       .from('accounts')
-      .upsert({
-        organization_id: organizationId,
-        account_name: accountName,
-        total_revenue: data.totalRevenue,
-        total_orders: data.totalOrders,
-        first_order_date: data.firstOrderDate,
-        last_order_date: data.lastOrderDate,
-        average_order_value: data.totalRevenue / data.totalOrders,
-      }, {
+      .upsert(batch, {
         onConflict: 'organization_id,account_name',
         ignoreDuplicates: false
       });
 
     if (error) {
-      console.error(`Error upserting account ${accountName}:`, error);
+      console.error(`Error upserting account batch ${i / accountBatchSize + 1}:`, error);
     }
   }
 
-  for (const [productName, data] of productMap.entries()) {
-    const { data: existingProduct } = await supabase
-      .from('products')
-      .select('manual_brand, brand')
-      .eq('organization_id', organizationId)
-      .eq('product_name', productName)
-      .maybeSingle();
+  // Fetch all existing products in one query instead of individual queries
+  const productNames = Array.from(productMap.keys());
+  const { data: existingProducts } = await supabase
+    .from('products')
+    .select('product_name, manual_brand, brand')
+    .eq('organization_id', organizationId)
+    .in('product_name', productNames);
 
+  const existingProductMap = new Map(
+    (existingProducts || []).map(p => [p.product_name, p])
+  );
+
+  // Prepare bulk product upserts
+  const productUpserts: ProductInsert[] = Array.from(productMap.entries()).map(([productName, data]) => {
+    const existingProduct = existingProductMap.get(productName);
+    
     let primaryBrand: string | null = null;
     if (data.brandCounts.size > 0) {
       let maxCount = 0;
@@ -1107,19 +1187,27 @@ export async function updateAggregatedData(organizationId: string) {
       last_sale_date: data.lastSaleDate,
     };
 
+    // Only update brand if manual_brand is not set
     if (!existingProduct?.manual_brand) {
       updateData.brand = primaryBrand;
     }
 
+    return updateData;
+  });
+
+  // Bulk upsert products in batches of 500
+  const productBatchSize = 500;
+  for (let i = 0; i < productUpserts.length; i += productBatchSize) {
+    const batch = productUpserts.slice(i, i + productBatchSize);
     const { error } = await supabase
       .from('products')
-      .upsert(updateData, {
+      .upsert(batch, {
         onConflict: 'organization_id,product_name',
         ignoreDuplicates: false
       });
 
     if (error) {
-      console.error(`Error upserting product ${productName}:`, error);
+      console.error(`Error upserting product batch ${i / productBatchSize + 1}:`, error);
     }
   }
 
