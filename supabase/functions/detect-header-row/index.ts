@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,6 +9,7 @@ const corsHeaders = {
 
 interface HeaderDetectionRequest {
   rows: Array<{ rowIndex: number; values: any[] }>;
+  distributorId?: string;
 }
 
 interface HeaderDetectionResponse {
@@ -30,7 +32,7 @@ Deno.serve(async (req) => {
       throw new Error("OPENAI_API_KEY not configured in Supabase secrets");
     }
 
-    const { rows }: HeaderDetectionRequest = await req.json();
+    const { rows, distributorId }: HeaderDetectionRequest = await req.json();
 
     if (!rows || !Array.isArray(rows) || rows.length === 0) {
       return new Response(
@@ -39,7 +41,33 @@ Deno.serve(async (req) => {
       );
     }
 
-    const prompt = `Analyze this spreadsheet data and identify the header row.
+    // Fetch distributor-specific AI training config if distributorId is provided
+    let aiTrainingConfig: { parsing_instructions?: string; field_mappings?: Record<string, any> } | null = null;
+
+    if (distributorId) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+      if (supabaseUrl && supabaseServiceKey) {
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+        const { data: configData, error: configError } = await supabase
+          .from("ai_training_configurations")
+          .select("parsing_instructions, field_mappings")
+          .eq("distributor_id", distributorId)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (configError) {
+          console.warn("Failed to fetch AI training config:", configError);
+        } else if (configData) {
+          aiTrainingConfig = configData;
+          console.log("📖 Found distributor-specific AI training config");
+        }
+      }
+    }
+
+    let prompt = `Analyze this spreadsheet data and identify the header row.
 
 Spreadsheet rows (first 15):
 ${JSON.stringify(rows, null, 2)}
@@ -60,7 +88,27 @@ Common patterns:
 
 Example: If row values are ["Customer_Name", null, "Product_Name", "", "Quantity"]
 Then: columnNames should be ["Customer_Name", "Product_Name", "Quantity"]
-And: columnIndices should be [0, 2, 4]
+And: columnIndices should be [0, 2, 4]`;
+
+    if (aiTrainingConfig?.parsing_instructions) {
+      prompt += `
+
+IMPORTANT - DISTRIBUTOR-SPECIFIC AI TRAINING INSTRUCTIONS:
+${aiTrainingConfig.parsing_instructions}
+
+Please apply these instructions when identifying the header row. These instructions describe the specific format and conventions used by this distributor.`;
+    }
+
+    if (aiTrainingConfig?.field_mappings && Object.keys(aiTrainingConfig.field_mappings).length > 0) {
+      prompt += `
+
+FIELD MAPPING HINTS FROM AI TRAINING:
+${JSON.stringify(aiTrainingConfig.field_mappings, null, 2)}
+
+Use these learned patterns to help identify the header row.`;
+    }
+
+    prompt += `
 
 Return ONLY valid JSON (no markdown, no explanation):
 {

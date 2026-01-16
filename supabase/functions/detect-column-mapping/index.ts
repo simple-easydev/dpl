@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,11 +11,7 @@ interface ColumnMappingRequest {
   columns: string[];
   sampleData: any[];
   synonymsByField?: Record<string, string[]>;
-  aiTrainingConfig?: {
-    field_mappings?: Record<string, any>;
-    parsing_instructions?: string;
-    orientation?: string;
-  };
+  distributorId?: string;
 }
 
 interface ColumnMappingResponse {
@@ -34,7 +31,7 @@ Deno.serve(async (req) => {
       throw new Error("OPENAI_API_KEY not configured in Supabase secrets");
     }
 
-    const { columns, sampleData, synonymsByField, aiTrainingConfig }: ColumnMappingRequest = await req.json();
+    const { columns, sampleData, synonymsByField, distributorId }: ColumnMappingRequest = await req.json();
 
     if (!columns || !Array.isArray(columns) || columns.length === 0) {
       return new Response(
@@ -48,6 +45,32 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: "Invalid request: sampleData array required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // Fetch distributor-specific AI training config if distributorId is provided
+    let aiTrainingConfig: { parsing_instructions?: string; field_mappings?: Record<string, any> } | null = null;
+
+    if (distributorId) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+      if (supabaseUrl && supabaseServiceKey) {
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+        const { data: configData, error: configError } = await supabase
+          .from("ai_training_configurations")
+          .select("parsing_instructions, field_mappings")
+          .eq("distributor_id", distributorId)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (configError) {
+          console.warn("Failed to fetch AI training config:", configError);
+        } else if (configData) {
+          aiTrainingConfig = configData;
+          console.log("📖 Found distributor-specific AI training config");
+        }
+      }
     }
 
     // Restructure sample data to use actual column names as keys

@@ -65,7 +65,7 @@ export async function detectColumnMappingEnhanced(
   }
 
   // Detect the actual header row (handles complex layouts with titles/groupings above headers)
-  const headerDetection = await detectHeaderRow(sampleRows);
+  const headerDetection = await detectHeaderRow(sampleRows, distributorId);
   const headerRowIndex = headerDetection.index;
   const columns = headerDetection.columns;
   const columnIndices = headerDetection.columnIndices;
@@ -126,11 +126,11 @@ export async function detectColumnMappingEnhanced(
   const aiClient = openai;
   if (aiClient) {
     console.log('🤖 Attempting OpenAI detection...');
-    if (aiTrainingConfig?.parsing_instructions) {
-      console.log('📖 Using AI training instructions from configuration');
+    if (distributorId) {
+      console.log('📖 Using distributor ID for AI training config lookup');
     }
     try {
-      aiResult = sanitizeDetectionResult(await detectWithOpenAI(aiClient, columns, dataRows, synonyms, aiTrainingConfig));
+      aiResult = sanitizeDetectionResult(await detectWithOpenAI(aiClient, columns, dataRows, synonyms, distributorId));
       if (aiResult.confidence > bestResult.confidence) {
         bestResult = aiResult;
         console.log('✅ OpenAI detection succeeded with confidence:', aiResult.confidence);
@@ -209,7 +209,10 @@ async function loadSynonyms(organizationId: string): Promise<FieldSynonym[]> {
  * Detects the actual header row in complex spreadsheets using AI
  * Handles cases where first rows contain titles, groupings, or empty cells
  */
-async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: string[]; confidence: number, columnIndices:number[] }> {
+async function detectHeaderRow(
+  rows: any[],
+  distributorId?: string
+): Promise<{ index: number; columns: string[]; confidence: number, columnIndices:number[] }> {
 
   if (rows.length === 0) {
     return { index: 0, columns: [], confidence: 0, columnIndices:[] };
@@ -218,8 +221,8 @@ async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: s
   // Use AI to detect header row
   try {
     console.log('🤖 Using AI to detect header row...');
-    
-    const aiResult = await detectHeaderRowWithAI(rows);
+
+    const aiResult = await detectHeaderRowWithAI(rows, distributorId);
     
     if (aiResult && aiResult.confidence >= 70) {
       console.log(`✅ AI detected header at row ${aiResult.headerRowIndex} (confidence: ${aiResult.confidence}%)`);
@@ -290,7 +293,10 @@ async function detectHeaderRow(rows: any[]): Promise<{ index: number; columns: s
  * Uses AI to detect the header row in complex spreadsheets
  * Calls Supabase Edge Function to keep OpenAI API key secure
  */
-async function detectHeaderRowWithAI(rows: any[]): Promise<{ headerRowIndex: number; columnNames: string[]; columnIndices: number[]; confidence: number; reasoning: string } | null> {
+async function detectHeaderRowWithAI(
+  rows: any[],
+  distributorId?: string
+): Promise<{ headerRowIndex: number; columnNames: string[]; columnIndices: number[]; confidence: number; reasoning: string } | null> {
   try {
     // Prepare first 15 rows for analysis
     const rowsToAnalyze = rows.slice(0, 15).map((row, idx) => ({
@@ -304,9 +310,12 @@ async function detectHeaderRowWithAI(rows: any[]): Promise<{ headerRowIndex: num
     }));
 
     console.log('🔐 Calling Supabase Edge Function for secure AI header detection...');
+    if (distributorId) {
+      console.log('📖 Using distributor ID for AI training config lookup:', distributorId);
+    }
 
     const { data, error } = await supabase.functions.invoke('detect-header-row', {
-      body: { rows: rowsToAnalyze }
+      body: { rows: rowsToAnalyze, distributorId }
     });
 
     if (error) {
@@ -629,7 +638,7 @@ async function detectWithOpenAI(
   columns: string[],
   sampleRows: any[],
   synonyms: FieldSynonym[],
-  aiTrainingConfig?: { field_mappings?: Record<string, any>; parsing_instructions?: string; orientation?: string }
+  distributorId?: string
 ): Promise<DetectionResult> {
   try {
     const sampleData = sampleRows.slice(0, 5);
@@ -641,13 +650,16 @@ async function detectWithOpenAI(
     }, {} as Record<string, string[]>);
 
     console.log('🔐 Calling Supabase Edge Function for secure AI column mapping...');
+    if (distributorId) {
+      console.log('📖 Using distributor ID for AI training config lookup:', distributorId);
+    }
 
     const { data, error } = await supabase.functions.invoke('detect-column-mapping', {
       body: {
         columns,
         sampleData,
         synonymsByField,
-        aiTrainingConfig,
+        distributorId,
       }
     });
 
